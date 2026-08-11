@@ -16,7 +16,7 @@ FLOOR: N
 | R-2 | Not yet enforced. | - | NONE | - | - |
 ```
 
-- `FLOOR: N` — minimum row count. `arm` raises it to the row count; nothing ever lowers it.
+- `FLOOR: N` — minimum row count. `declare` and `arm` raise it to the row count; nothing ever lowers it.
 - `check` — `<file> @ <profile>` for armed rules, or `NONE` (= declared only).
 - `hash` — first 12 hex chars of the sha256 of the tagged test body; `-` when `NONE`.
 - IDs match `[A-Z][A-Z0-9-]*[0-9]` (e.g. `R-1`, `SEC-12`); every field must be non-empty.
@@ -40,7 +40,7 @@ All commands take `--repo PATH` (default `.`).
 | `list` | List all rules with armed/declared state. |
 | `show ID` | Print every field of one rule. |
 | `unarmed` | List rules whose check is `NONE`. |
-| `declare "sentence" --id ID` | Append a declared (unarmed) row. Optional `--red-proof TEXT`. |
+| `declare "sentence" --id ID` | Append a declared (unarmed) row and raise FLOOR to the row count. Optional `--red-proof TEXT`. |
 | `arm ID --check "file @ profile"` | Resolve the tag, compute the hash, set enforced-by from the file kind, raise FLOOR to the row count. Refuses skipped tests. Optional `--red-proof TEXT`. |
 | `rehash ID` | Recompute an armed rule's hash after a reviewed edit. Refuses a no-op. |
 | `check [--report pw.json] [--all "repo1,repo2"]` | Verify the ledger (see below). |

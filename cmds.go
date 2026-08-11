@@ -101,6 +101,7 @@ func cmdDeclare(repo, sentence, id, redProof string, stdout io.Writer) error {
 		return failf("refusing: rule %s already exists", id)
 	}
 	l.Rows = append(l.Rows, Row{ID: id, Rule: sentence, EnforcedBy: "-", Check: "NONE", RedProof: redProof, Hash: "-"})
+	l.raiseFloor(len(l.Rows))
 	if err := saveLedger(repo, l); err != nil {
 		return err
 	}

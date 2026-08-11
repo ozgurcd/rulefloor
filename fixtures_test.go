@@ -212,6 +212,15 @@ func TestFixtureTable(t *testing.T) {
 			wantMsg:  "orphan tag G-9",
 		},
 		{
+			name: "declared row deleted after arm (append-only)",
+			prep: func(t *testing.T, repo string) {
+				mustRun(t, "declare", "Second rule.", "--id", "R-2", "--repo", repo)
+				deleteLedgerRow(t, repo, "R-2")
+			},
+			wantCode: 1,
+			wantMsg:  "below FLOOR",
+		},
+		{
 			name:     "no-op rehash refused",
 			cmd:      []string{"rehash", "R-1"},
 			wantCode: 1,
