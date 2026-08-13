@@ -53,9 +53,12 @@ an explicit, auditable step, never an automatic one.
 
 ## Install
 
-Clone the repo and build. Any Go ≥ 1.21 works — the module's `go` directive
-is `1.21`, there are no dependencies, and the tree builds and passes its full
-test suite on go1.21.13 exactly as on current toolchains:
+Clone the repo and build. **Requires Go 1.26.6 or newer** — the module's
+`go` directive is `1.26.6`, an owner-pinned floor. Stdlib only, no
+dependencies. This floor matters beyond this repo: the entrypoint gates
+below build this tool on first use, and a toolchain under the floor (that
+cannot fetch 1.26.6 via `GOTOOLCHAIN=auto`) turns those gates into
+CANNOT-EVALUATE, which is a hard failure by design.
 
 ```bash
 git clone git@github.com:identuum/rulefloor.git
