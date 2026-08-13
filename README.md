@@ -53,7 +53,9 @@ an explicit, auditable step, never an automatic one.
 
 ## Install
 
-Clone the repo and build (any Go ≥ 1.21, no dependencies):
+Clone the repo and build. Any Go ≥ 1.21 works — the module's `go` directive
+is `1.21`, there are no dependencies, and the tree builds and passes its full
+test suite on go1.21.13 exactly as on current toolchains:
 
 ```bash
 git clone git@github.com:identuum/rulefloor.git
@@ -132,6 +134,7 @@ rulefloor: check FAILED: 1 problem(s) in .    # exit 1
 ```
 FAIL SEC-1: .skip is set on the tagged test
 FAIL SEC-1: hash mismatch: ledger a8fc29914de5, actual 0c44037af79f (body changed; review, then rehash)
+PASS SEC-2 (lockout_test.go @ unit)
 rulefloor: check FAILED: 2 problem(s) in .    # exit 1
 ```
 
@@ -270,8 +273,9 @@ given, comma-separated) and fails if any fails. Not combinable with
 A ledger nobody checks is decoration. Put `check` inside the commands people
 already run.
 
-**Makefile** (builds the sibling checkout's binary on first use; a missing
-sibling is a hard error — a gate that cannot measure must not look green):
+**Makefile** (verbatim from a repo using it in production; builds the sibling
+checkout's binary on first use, and a missing sibling is a hard error — a
+gate that cannot measure must not look green):
 
 ```make
 RULEFLOOR_DIR ?= ../rulefloor
@@ -282,11 +286,17 @@ rulefloor-check:
 		exit 2; \
 	fi
 	@if [ ! -x "$(RULEFLOOR_DIR)/rulefloor" ]; then \
-		(cd "$(RULEFLOOR_DIR)" && go build -o rulefloor .) || exit 2; \
+		echo "rulefloor-check: building $(RULEFLOOR_DIR)/rulefloor"; \
+		(cd "$(RULEFLOOR_DIR)" && go build -o rulefloor .) || { \
+			echo "rulefloor-check: CANNOT-EVALUATE — go build of the rulefloor tool failed" >&2; \
+			exit 2; \
+		}; \
 	fi
 	@"$(RULEFLOOR_DIR)/rulefloor" check --repo .
 
-verify: rulefloor-check  # plus your other gates
+verify:
+	@$(MAKE) --no-print-directory rulefloor-check
+	# ... your other gates
 ```
 
 **package.json:**
@@ -317,11 +327,12 @@ or the ID is spelled differently. For Go: the line must be exactly
 `// RULE: SEC-1` (that spacing), *directly* above the `func TestXxx` line —
 no blank line between.
 
-**`tag appears in 2 test titles; it must be unique`** — one rule, one test.
-Give the second test its own rule, or drop its tag.
+**`CANNOT-EVALUATE: tag [SEC-1] appears in 2 test titles; it must be unique`**
+— one rule, one test. Give the second test its own rule, or drop its tag.
 
-**`refusing: rule X is already armed`** — you wanted `rehash`. `arm` is a
-one-time act; accepting body changes is deliberately a separate verb.
+**`refusing: rule SEC-1 is already armed (use rehash to accept a changed
+body)`** — you wanted `rehash`. `arm` is a one-time act; accepting body
+changes is deliberately a separate verb.
 
 **`refusing: no-op rehash`** — the body hasn't changed, so there is nothing
 to accept. If you expected a change, you edited a different test.
@@ -334,9 +345,10 @@ bytes, bytes are the pin. Review the diff, then `rehash`. This is working as
 intended: the ledger notices *every* change, and you decide which ones are
 fine.
 
-**`go test ran but did not report "--- PASS"`** — the tagged func exists (the
-tag check passed) but the run didn't execute it; usually a build-tag or
-platform constraint on the file. Arm a test that runs where `check` runs.
+**`go test ran but did not report "--- PASS: TestXxx"`** — the tagged func
+exists (the tag check passed) but the run didn't execute it; usually a
+build-tag or platform constraint on the file. Arm a test that runs where
+`check` runs.
 
 ## Guarantees and honest limits
 
@@ -355,6 +367,12 @@ platform constraint on the file. Arm a test that runs where `check` runs.
   hashed body but not statically decidable. For such specs, name the profile
   after the run that actually executes them (e.g. `e2e-run`) and enforce via
   `--report` from that run — do not claim static protection.
+- A **describe-level or block-level conditional gate** — Playwright
+  `test.skip(cond, ...)` at `test.describe` scope — sits entirely OUTSIDE
+  the hashed test span: `arm` accepts the test and `check` cannot see the
+  gate at all, not even as changed bytes. Concretely: three identuum rows
+  (MFA-SA-1, WIZARD-1, PIN-CHIP-1) are gated this way and are enforced only
+  by their `e2e-run` profile run, not by the static check.
 - The hash pins the **test's own span**. Helpers it calls live outside the
   span; gut a helper and the hash won't notice — the test *run* (Go rows,
   `--report` rows) is the second line of defense.
