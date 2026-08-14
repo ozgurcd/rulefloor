@@ -26,6 +26,7 @@ Usage:
   rulefloor arm ID --check "file @ profile"   [--red-proof TEXT] [--repo PATH]
   rulefloor rehash ID                         [--repo PATH]
   rulefloor check                             [--repo PATH] [--report pw.json] [--all "repo1,repo2"]
+                                              [--run-profile NAME [--tags T]]
 
 Exit codes: 0 ok, 1 check failure or refusal, 2 fatal
 (malformed ledger, missing field, CANNOT-EVALUATE, usage error).
@@ -44,12 +45,14 @@ func fatalf(format string, a ...any) error { return exitErr{2, fmt.Sprintf(forma
 
 // flagTakesValue lists every flag; false marks booleans.
 var flagTakesValue = map[string]bool{
-	"--repo":      true,
-	"--id":        true,
-	"--check":     true,
-	"--report":    true,
-	"--red-proof": true,
-	"--all":       true,
+	"--repo":        true,
+	"--id":          true,
+	"--check":       true,
+	"--report":      true,
+	"--red-proof":   true,
+	"--all":         true,
+	"--run-profile": true,
+	"--tags":        true,
 }
 
 var allowedFlags = map[string]map[string]bool{
@@ -60,7 +63,7 @@ var allowedFlags = map[string]map[string]bool{
 	"declare": {"--repo": true, "--id": true, "--red-proof": true},
 	"arm":     {"--repo": true, "--check": true, "--red-proof": true},
 	"rehash":  {"--repo": true},
-	"check":   {"--repo": true, "--report": true, "--all": true},
+	"check":   {"--repo": true, "--report": true, "--all": true, "--run-profile": true, "--tags": true},
 }
 
 // parseArgs splits args into flag values and positionals. Flags may appear
@@ -183,7 +186,10 @@ func dispatch(args []string, stdout io.Writer) error {
 		if err := want(0); err != nil {
 			return err
 		}
-		return cmdCheck(repo, flags["--report"], flags["--all"], stdout)
+		if flags["--tags"] != "" && flags["--run-profile"] == "" {
+			return fatalf("check: --tags requires --run-profile")
+		}
+		return cmdCheck(repo, flags["--report"], flags["--all"], flags["--run-profile"], flags["--tags"], stdout)
 	}
 	return fatalf("unknown command %q\n\n%s", cmd, usageText)
 }

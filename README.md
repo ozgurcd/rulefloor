@@ -212,10 +212,29 @@ confuse the span.
 
 `<file> @ <profile>`. The file is relative to the repo root and determines
 the kind by suffix (`.spec.ts` → playwright, `_test.go` → go-test). The
-profile is free text naming *where the test actually runs* — a Playwright
-project (`chromium`), a Go suite name (`unit`), or something like `e2e-run`
-when the proof only executes in a full e2e environment (see
+profile names *where the test actually runs* — a Playwright project
+(`chromium`), or something like `e2e-run` when the proof only executes in
+a full e2e environment (see
 [honest limits](#guarantees-and-honest-limits)).
+
+**For go-test rows the profile is semantic.** `unit` means the test is
+hermetic: plain `check` executes it and refuses `t.Skip` in its body. Any
+other profile (say `integration`) marks a test with an environmental
+precondition — a database, a live stack: plain `check` verifies it
+STATICALLY only (file, tag, hash), `t.Skip` guards are allowed, and the
+teeth live behind an explicit run:
+
+```bash
+rulefloor check --run-profile integration --tags integration
+```
+
+`--run-profile NAME` additionally executes every go-test row whose profile
+is NAME with `go test -tags T -count=1 -run '^TestXxx$'`. There, a test
+that SKIPS at runtime is CANNOT-EVALUATE (exit 2) — its precondition was
+absent and a skip is not a proof; a failure is a failure (exit 1). Unit
+rows behave exactly as in plain check. `--tags` requires `--run-profile`;
+`--run-profile` cannot combine with `--all`. No flag weakens any existing
+check — the mode only ADDS execution.
 
 ## Command reference
 
@@ -380,6 +399,10 @@ build-tag or platform constraint on the file. Arm a test that runs where
   span; gut a helper and the hash won't notice — the test *run* (Go rows,
   `--report` rows) is the second line of defense.
 - Playwright rows without `--report` are pinned but not executed by `check`.
+- Go rows on a non-`unit` profile are pinned but not executed by plain
+  `check` — enforcement of their runtime truth is the explicit
+  `--run-profile` invocation, which someone must actually run (wire it into
+  the pipeline that provisions the environment).
 
 ## Ledger format specification
 

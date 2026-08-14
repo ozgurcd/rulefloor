@@ -119,7 +119,7 @@ func TestGoKindEndToEnd(t *testing.T) {
 	writeFile(t, repo, "refresh_test.go", goFixture)
 	mustRun(t, "init", "--repo", repo)
 	mustRun(t, "declare", "Refresh tokens are single use.", "--id", "G-1", "--repo", repo)
-	mustRun(t, "arm", "G-1", "--check", "refresh_test.go @ default", "--repo", repo)
+	mustRun(t, "arm", "G-1", "--check", "refresh_test.go @ unit", "--repo", repo)
 	out := mustRun(t, "check", "--repo", repo)
 	if !strings.Contains(out, "PASS G-1") {
 		t.Fatalf("check output:\n%s", out)
@@ -145,7 +145,7 @@ func TestSkippy(t *testing.T) {
 `)
 	mustRun(t, "init", "--repo", repo)
 	mustRun(t, "declare", "Skipped rule.", "--id", "G-2", "--repo", repo)
-	if code, out := run2(t, "arm", "G-2", "--check", "skip_test.go @ default", "--repo", repo); code != 1 || !strings.Contains(out, "t.Skip") {
+	if code, out := run2(t, "arm", "G-2", "--check", "skip_test.go @ unit", "--repo", repo); code != 1 || !strings.Contains(out, "t.Skip") {
 		t.Fatalf("arm on t.Skip test: exit %d:\n%s", code, out)
 	}
 }
@@ -319,5 +319,85 @@ func TestExtractPlaywrightRegexLiteralBody(t *testing.T) {
 	}
 	if len(ref.hash()) != 12 {
 		t.Fatalf("hash %q", ref.hash())
+	}
+}
+
+// Fixture for the profile model: a build-tagged integration test that guards
+// on its environment (t.Skip) and can be forced to fail.
+const goItgFixture = `//go:build integration
+
+package fixture
+
+import (
+	"os"
+	"testing"
+)
+
+// RULE: IG-1
+func TestIntegrationTeeth(t *testing.T) {
+	if os.Getenv("RULEFLOOR_FIXTURE_DB") == "" {
+		t.Skip("no database")
+	}
+	if os.Getenv("RULEFLOOR_FIXTURE_ITG_FAIL") == "1" {
+		t.Fatal("teeth bite")
+	}
+}
+`
+
+func TestGoProfileStaticAndRunProfile(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "go.mod", "module fixture\n\ngo 1.21\n")
+	writeFile(t, repo, "itg_test.go", goItgFixture)
+	mustRun(t, "init", "--repo", repo)
+	mustRun(t, "declare", "The DB teeth hold at the schema layer.", "--id", "IG-1", "--repo", repo)
+	// Arming a skipping test at the unit profile stays REFUSED.
+	if code, out := run2(t, "arm", "IG-1", "--check", "itg_test.go @ unit", "--repo", repo); code != 1 || !strings.Contains(out, "t.Skip") {
+		t.Fatalf("unit arm of skipping test: exit %d:\n%s", code, out)
+	}
+	// The integration profile accepts the guarded skip and arms.
+	mustRun(t, "arm", "IG-1", "--check", "itg_test.go @ integration", "--repo", repo)
+	// Plain check is STATIC-ONLY for the row: green with no env, no run.
+	mustRun(t, "check", "--repo", repo)
+	// Run-profile with the precondition absent: the runtime skip is fatal.
+	if code, out := run2(t, "check", "--repo", repo, "--run-profile", "integration", "--tags", "integration"); code != 2 || !strings.Contains(out, "SKIPPED under --run-profile") {
+		t.Fatalf("run-profile with absent env: exit %d:\n%s", code, out)
+	}
+	// Precondition present: the row runs and passes.
+	t.Setenv("RULEFLOOR_FIXTURE_DB", "up")
+	mustRun(t, "check", "--repo", repo, "--run-profile", "integration", "--tags", "integration")
+	// A runtime failure bites.
+	t.Setenv("RULEFLOOR_FIXTURE_ITG_FAIL", "1")
+	if code, out := run2(t, "check", "--repo", repo, "--run-profile", "integration", "--tags", "integration"); code != 1 || !strings.Contains(out, "failed") {
+		t.Fatalf("run-profile failing test: exit %d:\n%s", code, out)
+	}
+	// Static tamper still bites in plain check (no weakening).
+	replaceInFile(t, filepath.Join(repo, "itg_test.go"), "teeth bite", "teeth biteX")
+	if code, out := run2(t, "check", "--repo", repo); code != 1 || !strings.Contains(out, "hash mismatch") {
+		t.Fatalf("plain check after tamper: exit %d:\n%s", code, out)
+	}
+}
+
+func TestRunProfileLeavesUnitRowsUnchanged(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "go.mod", "module fixture\n\ngo 1.21\n")
+	writeFile(t, repo, "refresh_test.go", goFixture)
+	mustRun(t, "init", "--repo", repo)
+	mustRun(t, "declare", "Refresh tokens are single use.", "--id", "G-1", "--repo", repo)
+	mustRun(t, "arm", "G-1", "--check", "refresh_test.go @ unit", "--repo", repo)
+	// Unit rows still EXECUTE under --run-profile mode, exactly as in
+	// plain check: a failing unit test fails the profile run too.
+	t.Setenv("RULEFLOOR_FIXTURE_FAIL", "1")
+	if code, out := run2(t, "check", "--repo", repo, "--run-profile", "integration", "--tags", "integration"); code != 1 || !strings.Contains(out, "go test -run ^TestRefreshSingleUse$ failed") {
+		t.Fatalf("unit row under run-profile: exit %d:\n%s", code, out)
+	}
+}
+
+func TestRunProfileFlagValidation(t *testing.T) {
+	repo := t.TempDir()
+	if code, out := run2(t, "check", "--repo", repo, "--tags", "integration"); code != 2 || !strings.Contains(out, "--tags requires --run-profile") {
+		t.Fatalf("--tags alone: exit %d:\n%s", code, out)
+	}
+	if code, out := run2(t, "check", "--all", "a,b", "--run-profile", "integration"); code != 2 || !strings.Contains(out, "cannot be combined with --all") {
+		t.Fatalf("--run-profile with --all: exit %d:\n%s", code, out)
 	}
 }

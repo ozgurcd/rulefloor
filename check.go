@@ -20,9 +20,9 @@ var (
 	goRuleTagRe = regexp.MustCompile(`^\s*// RULE:\s*(.*\S)\s*$`)
 )
 
-func cmdCheck(repo, reportPath, allSpec string, stdout io.Writer) error {
+func cmdCheck(repo, reportPath, allSpec, runProfile, tags string, stdout io.Writer) error {
 	if allSpec == "" {
-		n, err := checkRepo(repo, reportPath, stdout)
+		n, err := checkRepo(repo, reportPath, runProfile, tags, stdout)
 		if err != nil {
 			return err
 		}
@@ -33,6 +33,9 @@ func cmdCheck(repo, reportPath, allSpec string, stdout io.Writer) error {
 	}
 	if reportPath != "" {
 		return fatalf("check: --report cannot be combined with --all")
+	}
+	if runProfile != "" {
+		return fatalf("check: --run-profile cannot be combined with --all (a profile run belongs to one repo)")
 	}
 	var targets []string
 	for _, p := range strings.Split(allSpec, ",") {
@@ -46,7 +49,7 @@ func cmdCheck(repo, reportPath, allSpec string, stdout io.Writer) error {
 	total := 0
 	for _, tgt := range targets {
 		fmt.Fprintf(stdout, "== %s ==\n", tgt)
-		n, err := checkRepo(tgt, "", stdout)
+		n, err := checkRepo(tgt, "", "", "", stdout)
 		if err != nil {
 			var ee exitErr
 			if errors.As(err, &ee) {
@@ -64,7 +67,7 @@ func cmdCheck(repo, reportPath, allSpec string, stdout io.Writer) error {
 
 // checkRepo verifies one repo's ledger. It prints per-row results and
 // returns the number of problems; the error return is fatal-only.
-func checkRepo(repo, reportPath string, stdout io.Writer) (int, error) {
+func checkRepo(repo, reportPath, runProfile, tags string, stdout io.Writer) (int, error) {
 	l, err := loadLedger(repo)
 	if err != nil {
 		return 0, err
@@ -92,7 +95,7 @@ func checkRepo(repo, reportPath string, stdout io.Writer) (int, error) {
 			continue
 		}
 		armed++
-		rowProbs, err := checkRow(repo, r, report, reportPath != "")
+		rowProbs, err := checkRow(repo, r, report, reportPath != "", runProfile, tags)
 		if err != nil {
 			return 0, err
 		}
@@ -117,8 +120,8 @@ func checkRepo(repo, reportPath string, stdout io.Writer) (int, error) {
 	return problems, nil
 }
 
-func checkRow(repo string, r *Row, report map[string][]string, haveReport bool) ([]string, error) {
-	file, _, err := splitCheck(r.Check)
+func checkRow(repo string, r *Row, report map[string][]string, haveReport bool, runProfile, tags string) ([]string, error) {
+	file, profile, err := splitCheck(r.Check)
 	if err != nil {
 		return nil, fatalf("row %s: %v", r.ID, err)
 	}
@@ -143,17 +146,30 @@ func checkRow(repo string, r *Row, report map[string][]string, haveReport bool) 
 		}
 		return append(probs, err.Error()), nil
 	}
+	// Go rows with profile "unit" execute in plain check and may not skip.
+	// Any other profile is STATIC-ONLY here (file, tag, hash) — its teeth
+	// live behind an explicit `check --run-profile <profile>` run, where a
+	// runtime skip is CANNOT-EVALUATE, never a pass.
+	unitGo := kind == kindGoTest && profile == "unit"
 	if ref.Modifier == "skip" || ref.Modifier == "only" {
 		probs = append(probs, fmt.Sprintf(".%s is set on the tagged test", ref.Modifier))
 	}
-	if ref.GoSkips {
+	if ref.GoSkips && unitGo {
 		probs = append(probs, "tagged Go test calls t.Skip")
 	}
 	if h := ref.hash(); h != r.Hash {
 		probs = append(probs, fmt.Sprintf("hash mismatch: ledger %s, actual %s (body changed; review, then rehash)", r.Hash, h))
 	}
-	if kind == kindGoTest {
-		msg, err := runGoTest(abs, ref.FuncName)
+	if unitGo {
+		msg, err := runGoTest(abs, ref.FuncName, "", false)
+		if err != nil {
+			return nil, err
+		}
+		if msg != "" {
+			probs = append(probs, msg)
+		}
+	} else if kind == kindGoTest && runProfile != "" && profile == runProfile {
+		msg, err := runGoTest(abs, ref.FuncName, tags, true)
 		if err != nil {
 			return nil, err
 		}
@@ -177,11 +193,22 @@ func checkRow(repo string, r *Row, report map[string][]string, haveReport bool) 
 
 // runGoTest runs the single tagged test in the package of testFile.
 // It returns a non-empty problem string on test failure and an error only
-// for CANNOT-EVALUATE conditions.
-func runGoTest(testFile, funcName string) (string, error) {
-	cmd := exec.Command("go", "test", "-count=1", "-v", "-run", "^"+funcName+"$", ".")
+// for CANNOT-EVALUATE conditions. tags, when non-empty, is passed as
+// -tags. skipIsFatal marks --run-profile mode: a test that SKIPS there did
+// not prove anything — its precondition (a database, an environment) is
+// absent, and that is CANNOT-EVALUATE, never a pass.
+func runGoTest(testFile, funcName, tags string, skipIsFatal bool) (string, error) {
+	args := []string{"test", "-count=1", "-v", "-run", "^" + funcName + "$"}
+	if tags != "" {
+		args = append(args, "-tags", tags)
+	}
+	args = append(args, ".")
+	cmd := exec.Command("go", args...)
 	cmd.Dir = filepath.Dir(testFile)
 	out, err := cmd.CombinedOutput()
+	if skipIsFatal && strings.Contains(string(out), "--- SKIP: "+funcName) {
+		return "", fatalf("CANNOT-EVALUATE: %s SKIPPED under --run-profile — its precondition is absent and a skip is not a proof:\n%s", funcName, tail(string(out), 10))
+	}
 	if err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
 			return "", fatalf("CANNOT-EVALUATE: go toolchain not found: %v", err)

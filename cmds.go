@@ -136,7 +136,7 @@ func cmdArm(repo, id, checkSpec, redProof string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := refuseSkips(ref); err != nil {
+	if err := refuseSkips(ref, profile); err != nil {
 		return err
 	}
 	if redProof != "" {
@@ -168,7 +168,7 @@ func cmdRehash(repo, id string, stdout io.Writer) error {
 	if !r.armed() {
 		return failf("refusing: rule %s is not armed", id)
 	}
-	file, _, err := splitCheck(r.Check)
+	file, profile, err := splitCheck(r.Check)
 	if err != nil {
 		return fatalf("row %s: %v", id, err)
 	}
@@ -180,7 +180,7 @@ func cmdRehash(repo, id string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := refuseSkips(ref); err != nil {
+	if err := refuseSkips(ref, profile); err != nil {
 		return err
 	}
 	h := ref.hash()
@@ -205,11 +205,15 @@ func resolveRef(repo, file, id, kind string) (*testRef, error) {
 	return extractTagged(string(data), id, kind)
 }
 
-func refuseSkips(ref *testRef) error {
+// refuseSkips rejects skippable proofs. Go rows on a non-"unit" profile are
+// exempt from the t.Skip refusal: such tests legitimately guard on their
+// environment, are STATIC-ONLY in plain check, and an actual runtime skip
+// under `check --run-profile` is CANNOT-EVALUATE there.
+func refuseSkips(ref *testRef, profile string) error {
 	if ref.Modifier == "skip" || ref.Modifier == "only" {
 		return failf("refusing: tagged test uses .%s", ref.Modifier)
 	}
-	if ref.GoSkips {
+	if ref.GoSkips && ref.Kind == kindGoTest && profile == "unit" {
 		return failf("refusing: tagged Go test calls t.Skip")
 	}
 	return nil
