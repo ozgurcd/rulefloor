@@ -134,27 +134,42 @@ func leadingString(src string, i int) (string, bool) {
 }
 
 // matchDelim finds the close matching the delimiter at src[open], skipping
-// strings and // and /* */ comments. backtickEscapes is true for JS/TS
-// (template literals honor backslash escapes) and false for Go raw strings.
-func matchDelim(src string, open int, openCh, closeCh byte, backtickEscapes bool) (int, error) {
+// strings, // and /* */ comments, and (in JS mode) regex literals. jsMode is
+// true for JS/TS: template literals honor backslash escapes and a '/' in
+// expression position starts a regex literal; false for Go, whose raw
+// strings take no escapes and which has no regex literals.
+func matchDelim(src string, open int, openCh, closeCh byte, jsMode bool) (int, error) {
 	depth := 0
+	var prevSig byte // last significant byte outside strings/comments
+	var word []byte  // trailing identifier, for the `return /re/` position
 	for i := open; i < len(src); i++ {
 		c := src[i]
-		switch c {
-		case '/':
-			if i+1 < len(src) && src[i+1] == '/' {
-				for i < len(src) && src[i] != '\n' {
-					i++
-				}
-			} else if i+1 < len(src) && src[i+1] == '*' {
-				end := strings.Index(src[i+2:], "*/")
-				if end < 0 {
-					return 0, errors.New("unterminated block comment")
-				}
-				i += 2 + end + 1
+		switch {
+		case c == '/' && i+1 < len(src) && src[i+1] == '/':
+			for i < len(src) && src[i] != '\n' {
+				i++
 			}
-		case '\'', '"', '`':
-			esc := c != '`' || backtickEscapes
+			continue
+		case c == '/' && i+1 < len(src) && src[i+1] == '*':
+			end := strings.Index(src[i+2:], "*/")
+			if end < 0 {
+				return 0, errors.New("unterminated block comment")
+			}
+			i += 2 + end + 1
+			continue
+		case c == '/' && jsMode && regexPosition(prevSig, word):
+			if j, ok := skipRegexLiteral(src, i); ok {
+				i = j
+				prevSig = '/'
+				word = word[:0]
+				continue
+			}
+			// No closing '/' on this line: treat as division.
+			prevSig = c
+			word = word[:0]
+			continue
+		case c == '\'' || c == '"' || c == '`':
+			esc := c != '`' || jsMode
 			j := i + 1
 			for {
 				if j >= len(src) {
@@ -170,6 +185,11 @@ func matchDelim(src string, open int, openCh, closeCh byte, backtickEscapes bool
 				j++
 			}
 			i = j
+			prevSig = c
+			word = word[:0]
+			continue
+		}
+		switch c {
 		case openCh:
 			depth++
 		case closeCh:
@@ -178,8 +198,56 @@ func matchDelim(src string, open int, openCh, closeCh byte, backtickEscapes bool
 				return i, nil
 			}
 		}
+		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+			continue
+		}
+		prevSig = c
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+			word = append(word, c)
+		} else {
+			word = word[:0]
+		}
 	}
 	return 0, errors.New("unbalanced delimiters")
+}
+
+// regexPosition reports whether a '/' here begins a regex literal rather
+// than division: at scan start, after an operator/opener that cannot end an
+// expression, or after the keyword return. '[' is in the set because array
+// literals of regexes — the login.spec.ts:488 shape — open that way.
+func regexPosition(prevSig byte, word []byte) bool {
+	if prevSig == 0 {
+		return true
+	}
+	if strings.IndexByte("(,=:!&|?;{[", prevSig) >= 0 {
+		return true
+	}
+	return string(word) == "return"
+}
+
+// skipRegexLiteral advances from the opening '/' of a regex literal to its
+// closing '/', honoring backslash escapes and [...] character classes (a '/'
+// inside a class does not terminate). A newline before the close means this
+// was not a regex after all — JS regex literals cannot span lines.
+func skipRegexLiteral(src string, open int) (int, bool) {
+	inClass := false
+	for j := open + 1; j < len(src); j++ {
+		switch {
+		case src[j] == '\\':
+			j++
+		case src[j] == '\n':
+			return 0, false
+		case inClass:
+			if src[j] == ']' {
+				inClass = false
+			}
+		case src[j] == '[':
+			inClass = true
+		case src[j] == '/':
+			return j, true
+		}
+	}
+	return 0, false
 }
 
 func lineStart(src string, i int) int {

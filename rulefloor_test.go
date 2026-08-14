@@ -284,3 +284,40 @@ func TestExtractPlaywrightTrickyStrings(t *testing.T) {
 		t.Fatalf("hash %q", ref.hash())
 	}
 }
+
+// Fixture cut from the real identuum-ui login.spec.ts:488 shape: an array of
+// regex literals whose bodies contain quotes, braces, and escaped slashes.
+// The pre-fix extractor treated the '"' inside the first regex as a string
+// opener and reported CANNOT-EVALUATE: unbalanced delimiters.
+const pwRegexFixture = `import { test, expect } from '@playwright/test';
+
+test('page body never leaks credential terms [NL-1]', async ({ page }) => {
+  await page.goto('/login');
+  const body = await page.content();
+  const forbidden: RegExp[] = [
+    /challenge"?\s*:\s*"/i,
+    /allowCredentials/i,
+    /publicKey"?\s*:\s*\{/i,
+    /"signature"\s*:\s*"/i,
+    /"credentialId"\s*:\s*"/i,
+    /Bearer\s+[A-Za-z0-9._-]{8,}/,
+    /otpauth:\/\//i,
+  ];
+  for (const pat of forbidden) {
+    expect(body, ` + "`" + `page body must not match ${pat}` + "`" + `).not.toMatch(pat);
+  }
+});
+`
+
+func TestExtractPlaywrightRegexLiteralBody(t *testing.T) {
+	ref, err := extractPlaywright(pwRegexFixture, "NL-1")
+	if err != nil {
+		t.Fatalf("extract failed: %v", err)
+	}
+	if !strings.HasSuffix(ref.Body, "})") {
+		t.Fatalf("body span wrong:\n%s", ref.Body)
+	}
+	if len(ref.hash()) != 12 {
+		t.Fatalf("hash %q", ref.hash())
+	}
+}
