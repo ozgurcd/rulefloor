@@ -285,8 +285,8 @@ func TestExtractPlaywrightTrickyStrings(t *testing.T) {
 	}
 }
 
-// Fixture cut from the real identuum-ui login.spec.ts:488 shape: an array of
-// regex literals whose bodies contain quotes, braces, and escaped slashes.
+// Fixture cut from a real-world spec shape: an array of regex literals
+// whose bodies contain quotes, braces, and escaped slashes.
 // The pre-fix extractor treated the '"' inside the first regex as a string
 // opener and reported CANNOT-EVALUATE: unbalanced delimiters.
 const pwRegexFixture = `import { test, expect } from '@playwright/test';
@@ -399,5 +399,14 @@ func TestRunProfileFlagValidation(t *testing.T) {
 	}
 	if code, out := run2(t, "check", "--all", "a,b", "--run-profile", "integration"); code != 2 || !strings.Contains(out, "cannot be combined with --all") {
 		t.Fatalf("--run-profile with --all: exit %d:\n%s", code, out)
+	}
+}
+
+func TestVersionOutputShape(t *testing.T) {
+	for _, invocation := range []string{"version", "--version"} {
+		out := mustRun(t, invocation)
+		if out != "rulefloor dev\n" {
+			t.Fatalf("%s output = %q, want %q (the release build stamps main.version via -ldflags)", invocation, out, "rulefloor dev\n")
+		}
 	}
 }

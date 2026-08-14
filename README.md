@@ -53,15 +53,27 @@ an explicit, auditable step, never an automatic one.
 
 ## Install
 
-Clone the repo and build. **Requires Go 1.26.6 or newer** — the module's
-`go` directive is `1.26.6`, an owner-pinned floor. Stdlib only, no
+Homebrew (the tap goes live right after the repo):
+
+```bash
+brew install ozgurcd/tap/rulefloor
+```
+
+Or with Go:
+
+```bash
+go install github.com/ozgurcd/rulefloor@latest
+```
+
+Or build from source. **Requires Go 1.26.6 or newer** — the module's
+`go` directive is `1.26.6`, a pinned floor. Stdlib only, no
 dependencies. This floor matters beyond this repo: the entrypoint gates
 below build this tool on first use, and a toolchain under the floor (that
 cannot fetch 1.26.6 via `GOTOOLCHAIN=auto`) turns those gates into
 CANNOT-EVALUATE, which is a hard failure by design.
 
 ```bash
-git clone git@github.com:identuum/rulefloor.git
+git clone https://github.com/ozgurcd/rulefloor.git
 cd rulefloor && go build -o rulefloor .
 ```
 
@@ -392,9 +404,8 @@ build-tag or platform constraint on the file. Arm a test that runs where
 - A **describe-level or block-level conditional gate** — Playwright
   `test.skip(cond, ...)` at `test.describe` scope — sits entirely OUTSIDE
   the hashed test span: `arm` accepts the test and `check` cannot see the
-  gate at all, not even as changed bytes. Concretely: three identuum rows
-  (MFA-SA-1, WIZARD-1, PIN-CHIP-1) are gated this way and are enforced only
-  by their `e2e-run` profile run, not by the static check.
+  gate at all, not even as changed bytes. Rows gated this way are enforced
+  only by their profile run (e.g. `e2e-run`), never by the static check.
 - The hash pins the **test's own span**. Helpers it calls live outside the
   span; gut a helper and the hash won't notice — the test *run* (Go rows,
   `--report` rows) is the second line of defense.

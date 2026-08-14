@@ -11,6 +11,9 @@ import (
 	"strings"
 )
 
+// version is stamped at release time via -ldflags "-X main.version=v0.1.0".
+var version = "dev"
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -27,6 +30,7 @@ Usage:
   rulefloor rehash ID                         [--repo PATH]
   rulefloor check                             [--repo PATH] [--report pw.json] [--all "repo1,repo2"]
                                               [--run-profile NAME [--tags T]]
+  rulefloor version                           (also: rulefloor --version)
 
 Exit codes: 0 ok, 1 check failure or refusal, 2 fatal
 (malformed ledger, missing field, CANNOT-EVALUATE, usage error).
@@ -121,6 +125,10 @@ func dispatch(args []string, stdout io.Writer) error {
 	cmd := args[0]
 	if cmd == "help" || cmd == "--help" || cmd == "-h" {
 		fmt.Fprint(stdout, usageText)
+		return nil
+	}
+	if cmd == "version" || cmd == "--version" {
+		fmt.Fprintf(stdout, "rulefloor %s\n", version)
 		return nil
 	}
 	allowed, ok := allowedFlags[cmd]
