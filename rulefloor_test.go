@@ -540,3 +540,51 @@ func TestParseLedgerRejectsBadRedProofsLine(t *testing.T) {
 		})
 	}
 }
+
+func TestProveFlowAndRefusals(t *testing.T) {
+	repo := newLegacyRepo(t) // R-1 proved, R-2 armed-unproved, header stripped
+	mustRun(t, "redproofs", "--adopt", "--repo", repo)
+
+	// Refusals first: unknown, unarmed, dash, empty, already-proved.
+	mustRun(t, "declare", "Third rule.", "--id", "R-3", "--repo", repo)
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		wantCode int
+		wantMsg  string
+	}{
+		{"prove unknown rule", []string{"prove", "R-9", "--red-proof", fixtureProof}, 1, "no rule R-9"},
+		{"prove unarmed rule", []string{"prove", "R-3", "--red-proof", fixtureProof}, 1, "not armed"},
+		{"prove without proof", []string{"prove", "R-2"}, 2, "--red-proof is required"},
+		{"prove with dash", []string{"prove", "R-2", "--red-proof", "-"}, 2, `not the "-" placeholder`},
+		{"prove already proved", []string{"prove", "R-1", "--red-proof", fixtureProof}, 1, "already carries a red-proof"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, out := run2(t, append(tc.args, "--repo", repo)...)
+			if code != tc.wantCode || !strings.Contains(out, tc.wantMsg) {
+				t.Fatalf("exit %d (want %d), output:\n%s", code, tc.wantCode, out)
+			}
+		})
+	}
+
+	// The legit flow: R-2's watched proof lands, the ratchet rises,
+	// unproved empties, check stays green at the higher floor.
+	out := mustRun(t, "prove", "R-2", "--red-proof", "mutation watched FAIL then restored", "--repo", repo)
+	if !strings.Contains(out, "proved R-2; RED-PROOFS 2") {
+		t.Fatalf("prove output:\n%s", out)
+	}
+	out = mustRun(t, "unproved", "--repo", repo)
+	if !strings.Contains(out, "unproved: 0 of 2 armed rows") {
+		t.Fatalf("unproved after prove:\n%s", out)
+	}
+	out = mustRun(t, "check", "--repo", repo)
+	if !strings.Contains(out, "RED-PROOFS 2 (measured 2)") {
+		t.Fatalf("check after prove:\n%s", out)
+	}
+	// And the new floor has teeth: emptying the just-recorded proof drops
+	// the measurement below the raised header.
+	replaceInFile(t, ledgerFP(repo), "| mutation watched FAIL then restored |", "| - |")
+	if code, out := run2(t, "check", "--repo", repo); code != 1 || !strings.Contains(out, "below RED-PROOFS 2") {
+		t.Fatalf("check after emptying proved cell: exit %d:\n%s", code, out)
+	}
+}

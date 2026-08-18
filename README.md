@@ -262,6 +262,7 @@ Every command takes `--repo PATH` (default `.`).
 | `redproofs [--adopt]` | Ratchet status; `--adopt` writes `RED-PROOFS:` onto a legacy ledger at the **measured** count. |
 | `declare "sentence" --id ID` | Append a declared row; raise FLOOR. Optional `--red-proof TEXT`. |
 | `arm ID --check "file @ profile" --red-proof TEXT` | Pin the tagged test's hash; set enforced-by; raise FLOOR and RED-PROOFS. Refuses skipped tests. `--red-proof` is **required**. |
+| `prove ID --red-proof TEXT` | Record a watched proof on an already-armed `-` row (the debt burndown path); raises RED-PROOFS. Refuses to replace an existing proof. |
 | `rehash ID` | Accept a reviewed body change. Refuses a no-op, refuses skipped tests. |
 | `check [--report pw.json] [--all "repo1,repo2"]` | Verify everything (below). |
 
@@ -292,7 +293,8 @@ watched failing, a commit, a run URL). Since the RED-PROOFS ratchet:
   writes the header at the count measured *right then*; pre-existing `-`
   rows stay `-` — backfilling a proof text without re-watching the failure
   is exactly the lie the ratchet exists against. `unproved` lists that
-  debt; it shrinks only through `rehash`-era re-proofs or new arms.
+  debt; it shrinks only through `prove` (a genuinely watched failure,
+  recorded dated on the row) or new arms.
   (Any write operation — declare, arm, rehash — also adopts the header on
   a legacy ledger, at the same measured-count rule.)
 

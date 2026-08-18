@@ -29,6 +29,7 @@ Usage:
   rulefloor redproofs                         [--adopt] [--repo PATH]
   rulefloor declare "sentence" --id ID        [--red-proof TEXT] [--repo PATH]
   rulefloor arm ID --check "file @ profile"   --red-proof TEXT [--repo PATH]
+  rulefloor prove ID --red-proof TEXT         [--repo PATH]
   rulefloor rehash ID                         [--repo PATH]
   rulefloor check                             [--repo PATH] [--report pw.json] [--all "repo1,repo2"]
                                               [--run-profile NAME [--tags T]]
@@ -71,6 +72,7 @@ var allowedFlags = map[string]map[string]bool{
 	"redproofs": {"--repo": true, "--adopt": true},
 	"declare":   {"--repo": true, "--id": true, "--red-proof": true},
 	"arm":       {"--repo": true, "--check": true, "--red-proof": true},
+	"prove":     {"--repo": true, "--red-proof": true},
 	"rehash":    {"--repo": true},
 	"check":     {"--repo": true, "--report": true, "--all": true, "--run-profile": true, "--tags": true},
 }
@@ -200,6 +202,11 @@ func dispatch(args []string, stdout io.Writer) error {
 			return err
 		}
 		return cmdArm(repo, pos[0], flags["--check"], flags["--red-proof"], stdout)
+	case "prove":
+		if err := want(1); err != nil {
+			return err
+		}
+		return cmdProve(repo, pos[0], flags["--red-proof"], stdout)
 	case "rehash":
 		if err := want(1); err != nil {
 			return err

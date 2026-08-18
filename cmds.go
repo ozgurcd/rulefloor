@@ -229,6 +229,43 @@ func cmdUnproved(repo string, stdout io.Writer) error {
 	return nil
 }
 
+// cmdProve records a watched red-proof on an ALREADY-ARMED row — the
+// burndown path for the pre-ratchet "-" debt. It refuses to touch a row
+// that already carries a proof: recorded history is never silently
+// replaced. Raises RED-PROOFS through the same maintain path as arm.
+func cmdProve(repo, id, redProof string, stdout io.Writer) error {
+	if redProof == "" {
+		return fatalf("prove: --red-proof is required — describe the watched failure")
+	}
+	if redProof == "-" {
+		return fatalf("prove: --red-proof must be a real proof, not the \"-\" placeholder")
+	}
+	if err := validCell(redProof, "red-proof"); err != nil {
+		return err
+	}
+	l, err := loadLedger(repo)
+	if err != nil {
+		return err
+	}
+	r := l.find(id)
+	if r == nil {
+		return failf("no rule %s", id)
+	}
+	if !r.armed() {
+		return failf("refusing: rule %s is not armed (arm records its proof itself)", id)
+	}
+	if r.RedProof != "-" {
+		return failf("refusing: rule %s already carries a red-proof (recorded history is not replaced)", id)
+	}
+	r.RedProof = redProof
+	l.maintainRedProofs()
+	if err := saveLedger(repo, l); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "proved %s; RED-PROOFS %d\n", id, l.RedProofs)
+	return nil
+}
+
 // cmdRedProofs prints the ratchet state; with --adopt it writes the
 // RED-PROOFS header onto a legacy ledger at the MEASURED current count —
 // adoption never invents history ("-" rows stay unproved).
