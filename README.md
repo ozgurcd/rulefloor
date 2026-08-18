@@ -262,7 +262,7 @@ Every command takes `--repo PATH` (default `.`).
 | `redproofs [--adopt]` | Ratchet status; `--adopt` writes `RED-PROOFS:` onto a legacy ledger at the **measured** count. |
 | `declare "sentence" --id ID` | Append a declared row; raise FLOOR. Optional `--red-proof TEXT`. |
 | `arm ID --check "file @ profile" --red-proof TEXT` | Pin the tagged test's hash; set enforced-by; raise FLOOR and RED-PROOFS. Refuses skipped tests. `--red-proof` is **required**. |
-| `prove ID --red-proof TEXT` | Record a watched proof on an already-armed `-` row (the debt burndown path); raises RED-PROOFS. Refuses to replace an existing proof. |
+| `prove ID --red-proof TEXT [--replace]` | Record a watched proof on an already-armed `-` row (the debt burndown path); raises RED-PROOFS. Refuses to replace an existing proof — except with `--replace`, which overwrites ONLY a cell the tool can see is a non-proof (a `blocked:…` pre-arming note or a dateless cell), never a genuine dated proof. |
 | `rehash ID` | Accept a reviewed body change. Refuses a no-op, refuses skipped tests. |
 | `check [--report pw.json] [--all "repo1,repo2"]` | Verify everything (below). |
 
@@ -272,7 +272,9 @@ Refusals you will meet, all deliberate:
   already-armed rule (that's what `rehash` is for) · `arm` without a
   `--red-proof` (or with the `-` placeholder) · `arm`/`rehash` a test
   that has `.skip`/`.only` or calls `t.Skip*` · `rehash` when nothing
-  changed · `redproofs --adopt` when the header already exists.
+  changed · `redproofs --adopt` when the header already exists ·
+  `prove --replace` over a genuine dated proof (only a `blocked:…` or
+  dateless non-proof may be overwritten).
 
 ### The red-proof obligation
 

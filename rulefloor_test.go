@@ -588,3 +588,67 @@ func TestProveFlowAndRefusals(t *testing.T) {
 		t.Fatalf("check after emptying proved cell: exit %d:\n%s", code, out)
 	}
 }
+
+func TestProveReplaceOnlyOverwritesNonProofs(t *testing.T) {
+	repo := newLegacyRepo(t)
+	mustRun(t, "redproofs", "--adopt", "--repo", repo)
+	// R-1 carries a genuine dated proof (fixtureProof has no date, so give
+	// it one first via a controlled ledger shape). We instead assert on the
+	// TOOL'S classifier directly plus the command behavior.
+
+	// A genuine dated proof on R-1: prove R-2 with a dated text, then try to
+	// --replace it — refused.
+	mustRun(t, "prove", "R-2", "--red-proof", "mutation red-proved 2026-08-18: watched FAIL, restored", "--repo", repo)
+	if code, out := run2(t, "prove", "R-2", "--red-proof", "mutation red-proved 2026-08-18: different", "--replace", "--repo", repo); code != 1 || !strings.Contains(out, "genuine dated red-proof") {
+		t.Fatalf("--replace over a dated proof must refuse: exit %d:\n%s", code, out)
+	}
+	// Without --replace, a proved row is refused too (unchanged behavior).
+	if code, out := run2(t, "prove", "R-2", "--red-proof", "x 2026-08-18", "--repo", repo); code != 1 || !strings.Contains(out, "already carries a red-proof") {
+		t.Fatalf("prove over a proved row: exit %d:\n%s", code, out)
+	}
+
+	// Now shape a "blocked:" pre-arming cell on R-1 by hand (the ledger is
+	// tool-written, but this fixture simulates a legacy blocked: note that
+	// arm-time recorded — the exact RG1/RG2 case).
+	replaceInFile(t, ledgerFP(repo), "| R-1 | Refresh token is single use. | playwright | e2e/login.spec.ts @ chromium | "+fixtureProof+" |",
+		"| R-1 | Refresh token is single use. | playwright | e2e/login.spec.ts @ chromium | blocked: TestX is go:build integration + live Postgres |")
+	// The blocked: note is a non-proof: --replace overwrites it.
+	out := mustRun(t, "prove", "R-1", "--red-proof", "mutation red-proved 2026-08-18: guard inverted, watched FAIL, restored", "--replace", "--repo", repo)
+	if !strings.Contains(out, "replaced non-proof") || !strings.Contains(out, "blocked:") {
+		t.Fatalf("--replace over a blocked: note:\n%s", out)
+	}
+	// And a dateless cell is also a non-proof: shape one, replace it.
+	replaceInFile(t, ledgerFP(repo), "| mutation red-proved 2026-08-18: guard inverted, watched FAIL, restored |",
+		"| a note with no date at all |")
+	out = mustRun(t, "prove", "R-1", "--red-proof", "mutation red-proved 2026-08-18: second real proof", "--replace", "--repo", repo)
+	if !strings.Contains(out, "replaced non-proof") {
+		t.Fatalf("--replace over a dateless cell:\n%s", out)
+	}
+	// check stays green.
+	mustRun(t, "check", "--repo", repo)
+}
+
+func TestLooksLikeRealProof(t *testing.T) {
+	real := []string{
+		"mutation red-proved 2026-08-18: watched FAIL",
+		"red-proved 2026-08-14: x",
+		"proved on 2026-01-01",
+	}
+	nonProof := []string{
+		"-",
+		"",
+		"blocked: TestRg1 is go:build integration + live Postgres",
+		"a note with no date",
+		"mutation red-proved: no date here",
+	}
+	for _, s := range real {
+		if !looksLikeRealProof(s) {
+			t.Errorf("looksLikeRealProof(%q) = false, want true", s)
+		}
+	}
+	for _, s := range nonProof {
+		if looksLikeRealProof(s) {
+			t.Errorf("looksLikeRealProof(%q) = true, want false", s)
+		}
+	}
+}
