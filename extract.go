@@ -12,6 +12,11 @@ import (
 const (
 	kindPlaywright = "playwright"
 	kindGoTest     = "go-test"
+	// kindVitest covers *.test.ts source-pin suites. Extraction is the
+	// same title-tag mechanism as Playwright (the scanner matches both
+	// `test(` and `it(`); rows are STATIC-ONLY in check (file, tag,
+	// hash) — the vitest suite itself runs in the repo's own CI gate.
+	kindVitest = "vitest"
 )
 
 // kindForFile maps a check file to its test kind by suffix.
@@ -21,8 +26,10 @@ func kindForFile(path string) (string, error) {
 		return kindGoTest, nil
 	case strings.HasSuffix(path, ".spec.ts"):
 		return kindPlaywright, nil
+	case strings.HasSuffix(path, ".test.ts"):
+		return kindVitest, nil
 	}
-	return "", fatalf("CANNOT-EVALUATE: %q is neither a *_test.go nor a *.spec.ts file", path)
+	return "", fatalf("CANNOT-EVALUATE: %q is not a *_test.go, *.spec.ts, or *.test.ts file", path)
 }
 
 // testRef is one extracted tagged test.

@@ -258,25 +258,52 @@ Every command takes `--repo PATH` (default `.`).
 | `list` | All rules, with armed/declared state. |
 | `show ID` | Every field of one rule. |
 | `unarmed` | Rules that still need a test — the work queue. |
+| `unproved` | Armed rows whose red-proof cell is still `-` — the historical proof debt. |
+| `redproofs [--adopt]` | Ratchet status; `--adopt` writes `RED-PROOFS:` onto a legacy ledger at the **measured** count. |
 | `declare "sentence" --id ID` | Append a declared row; raise FLOOR. Optional `--red-proof TEXT`. |
-| `arm ID --check "file @ profile"` | Pin the tagged test's hash; set enforced-by; raise FLOOR. Refuses skipped tests. Optional `--red-proof TEXT`. |
+| `arm ID --check "file @ profile" --red-proof TEXT` | Pin the tagged test's hash; set enforced-by; raise FLOOR and RED-PROOFS. Refuses skipped tests. `--red-proof` is **required**. |
 | `rehash ID` | Accept a reviewed body change. Refuses a no-op, refuses skipped tests. |
 | `check [--report pw.json] [--all "repo1,repo2"]` | Verify everything (below). |
 
 Refusals you will meet, all deliberate:
 
 - `init` when a ledger exists · `declare` a duplicate ID · `arm` an
-  already-armed rule (that's what `rehash` is for) · `arm`/`rehash` a test
-  that has `.skip`/`.only` or calls `t.Skip*` · `rehash` when nothing changed.
+  already-armed rule (that's what `rehash` is for) · `arm` without a
+  `--red-proof` (or with the `-` placeholder) · `arm`/`rehash` a test
+  that has `.skip`/`.only` or calls `t.Skip*` · `rehash` when nothing
+  changed · `redproofs --adopt` when the header already exists.
 
-`--red-proof TEXT` records where the test was seen *red* (a commit, a run
-URL) — evidence the proof can actually fail. It is documentation, not
-verified by the tool.
+### The red-proof obligation
+
+A check nobody has ever watched FAIL proves nothing — it can be armed,
+green, and false (an assertion that matches every state passes vacuously).
+`--red-proof TEXT` records where the test was seen *red* (a mutation
+watched failing, a commit, a run URL). Since the RED-PROOFS ratchet:
+
+- **`arm` requires it.** Every newly armed row carries a real proof text —
+  arming with none, or with the `-` placeholder, is refused.
+- **`RED-PROOFS: N`** is a second header line the tool maintains: the
+  count of armed rows whose red-proof cell is not `-`. Like FLOOR it is
+  monotonic — every write raises it to the measured count when that grew,
+  and nothing the tool does lowers it. `check` fails when the measured
+  count sits below the header: a proof was emptied back to `-`, or a
+  proven row was deleted.
+- **Legacy ledgers adopt without inventing history.** `redproofs --adopt`
+  writes the header at the count measured *right then*; pre-existing `-`
+  rows stay `-` — backfilling a proof text without re-watching the failure
+  is exactly the lie the ratchet exists against. `unproved` lists that
+  debt; it shrinks only through `rehash`-era re-proofs or new arms.
+  (Any write operation — declare, arm, rehash — also adopts the header on
+  a legacy ledger, at the same measured-count rule.)
+
+The proof TEXT itself is documentation: the tool ratchets the count, it
+cannot judge whether the words describe a genuinely watched failure.
 
 ## `check`, in depth
 
 For the ledger itself: strict parse (any malformed or missing field is
-fatal), and row count ≥ FLOOR.
+fatal), row count ≥ FLOOR, and — once the header is adopted — the measured
+count of red-proved armed rows ≥ RED-PROOFS.
 
 For every **armed** row:
 
@@ -391,6 +418,7 @@ build-tag or platform constraint on the file. Arm a test that runs where
 - rulefloor is the ledger's only writer, and every write keeps the format
   parseable by its own strict parser.
 - FLOOR never decreases. Rows never silently disappear.
+- RED-PROOFS never decreases once adopted; arming demands a red-proof.
 - No command or flag lowers `check`'s strictness.
 - CANNOT-EVALUATE is always fatal (exit 2), never a skip.
 
@@ -410,10 +438,22 @@ build-tag or platform constraint on the file. Arm a test that runs where
   span; gut a helper and the hash won't notice — the test *run* (Go rows,
   `--report` rows) is the second line of defense.
 - Playwright rows without `--report` are pinned but not executed by `check`.
+- Vitest rows (`*.test.ts`, kind `vitest`) are pinned (tag + hash + no
+  `.skip`/`.only`) but never executed by `check`, and their title tags are
+  not orphan-scanned — the vitest suite itself runs in the repo's own CI
+  gate.
 - Go rows on a non-`unit` profile are pinned but not executed by plain
   `check` — enforcement of their runtime truth is the explicit
   `--run-profile` invocation, which someone must actually run (wire it into
   the pipeline that provisions the environment).
+- The RED-PROOFS ratchet counts proofs; it does not name them. A single
+  hand edit that empties one row's proof while adding text to another
+  keeps the count and passes — hand edits are forbidden by the only-writer
+  contract, and this is the same trust boundary FLOOR has. A hand-LOWERED
+  header is likewise invisible (measured ≥ header passes), exactly as a
+  hand-lowered FLOOR is.
+- The proof text is unverified prose: the ratchet guarantees a proof was
+  *recorded*, not that the recorded failure was genuinely watched.
 
 ## Ledger format specification
 
@@ -421,6 +461,7 @@ Frozen. The parser rejects anything else, fatally.
 
 ```
 FLOOR: <non-negative integer>
+RED-PROOFS: <non-negative integer>       (optional on legacy ledgers)
 <blank line>
 | ID | one-sentence rule | enforced-by | check | red-proof | hash |
 |---|---|---|---|---|---|
@@ -428,8 +469,11 @@ FLOOR: <non-negative integer>
 ```
 
 - Six columns, every cell non-empty (`-` is the explicit placeholder).
+- `RED-PROOFS`: at most once, directly after `FLOOR`; absent only on
+  ledgers that predate the ratchet (`redproofs --adopt` migrates).
 - `ID`: `[A-Z][A-Z0-9-]{0,30}[0-9]`, unique per ledger.
-- `enforced-by`: `playwright` | `go-test` for armed rows; `-` for declared.
+- `enforced-by`: `playwright` | `go-test` | `vitest` for armed rows; `-`
+  for declared.
 - `check`: `<repo-relative file> @ <profile>`, or `NONE` (declared).
 - `hash`: exactly 12 lowercase hex chars for armed rows; `-` for declared
   rows (enforced both ways).

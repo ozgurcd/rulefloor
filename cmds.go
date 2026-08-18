@@ -12,11 +12,11 @@ func cmdInit(repo string, stdout io.Writer) error {
 	if _, err := os.Stat(p); err == nil {
 		return failf("refusing: %s already exists", p)
 	}
-	l := &Ledger{Floor: 0}
+	l := &Ledger{Floor: 0, HasRedProofs: true}
 	if err := saveLedger(repo, l); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "initialized %s (FLOOR: 0)\n", p)
+	fmt.Fprintf(stdout, "initialized %s (FLOOR: 0, RED-PROOFS: 0)\n", p)
 	return nil
 }
 
@@ -102,6 +102,7 @@ func cmdDeclare(repo, sentence, id, redProof string, stdout io.Writer) error {
 	}
 	l.Rows = append(l.Rows, Row{ID: id, Rule: sentence, EnforcedBy: "-", Check: "NONE", RedProof: redProof, Hash: "-"})
 	l.raiseFloor(len(l.Rows))
+	l.maintainRedProofs()
 	if err := saveLedger(repo, l); err != nil {
 		return err
 	}
@@ -112,6 +113,15 @@ func cmdDeclare(repo, sentence, id, redProof string, stdout io.Writer) error {
 func cmdArm(repo, id, checkSpec, redProof string, stdout io.Writer) error {
 	if checkSpec == "" {
 		return fatalf("arm: --check \"<file> @ <profile>\" is required")
+	}
+	// The red-proof is a first-class obligation: arming a check nobody
+	// has watched FAIL is the vacuity this ledger exists to prevent
+	// (SA-ORG-COPY-1 was armed, green, and false).
+	if redProof == "" {
+		return fatalf("arm: --red-proof is required — describe the watched failure (arming an unproved check is refused)")
+	}
+	if redProof == "-" {
+		return fatalf("arm: --red-proof must be a real proof, not the \"-\" placeholder")
 	}
 	file, profile, err := splitCheck(checkSpec)
 	if err != nil {
@@ -139,20 +149,19 @@ func cmdArm(repo, id, checkSpec, redProof string, stdout io.Writer) error {
 	if err := refuseSkips(ref, profile); err != nil {
 		return err
 	}
-	if redProof != "" {
-		if err := validCell(redProof, "red-proof"); err != nil {
-			return err
-		}
-		r.RedProof = redProof
+	if err := validCell(redProof, "red-proof"); err != nil {
+		return err
 	}
+	r.RedProof = redProof
 	r.EnforcedBy = kind
 	r.Check = file + " @ " + profile
 	r.Hash = ref.hash()
 	l.raiseFloor(len(l.Rows))
+	l.maintainRedProofs()
 	if err := saveLedger(repo, l); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "armed %s: %s (hash %s); FLOOR %d\n", id, r.Check, r.Hash, l.Floor)
+	fmt.Fprintf(stdout, "armed %s: %s (hash %s); FLOOR %d, RED-PROOFS %d\n", id, r.Check, r.Hash, l.Floor, l.RedProofs)
 	return nil
 }
 
@@ -189,10 +198,63 @@ func cmdRehash(repo, id string, stdout io.Writer) error {
 	}
 	old := r.Hash
 	r.Hash = h
+	l.maintainRedProofs()
 	if err := saveLedger(repo, l); err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "rehashed %s: %s -> %s\n", id, old, h)
+	return nil
+}
+
+// cmdUnproved lists armed rows still carrying the "-" red-proof
+// placeholder — the historical debt the RED-PROOFS ratchet refuses to
+// let grow. Read-only.
+func cmdUnproved(repo string, stdout io.Writer) error {
+	l, err := loadLedger(repo)
+	if err != nil {
+		return err
+	}
+	armed, n := 0, 0
+	for _, r := range l.Rows {
+		if !r.armed() {
+			continue
+		}
+		armed++
+		if r.RedProof == "-" {
+			fmt.Fprintf(stdout, "%-24s %s\n", r.ID, r.Rule)
+			n++
+		}
+	}
+	fmt.Fprintf(stdout, "unproved: %d of %d armed rows carry no red-proof\n", n, armed)
+	return nil
+}
+
+// cmdRedProofs prints the ratchet state; with --adopt it writes the
+// RED-PROOFS header onto a legacy ledger at the MEASURED current count —
+// adoption never invents history ("-" rows stay unproved).
+func cmdRedProofs(repo string, adopt bool, stdout io.Writer) error {
+	l, err := loadLedger(repo)
+	if err != nil {
+		return err
+	}
+	m := l.measuredRedProofs()
+	if adopt {
+		if l.HasRedProofs {
+			return failf("refusing: RED-PROOFS header already present (%d)", l.RedProofs)
+		}
+		l.RedProofs = m
+		l.HasRedProofs = true
+		if err := saveLedger(repo, l); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "adopted RED-PROOFS: %d (measured; \"-\" rows stay unproved)\n", m)
+		return nil
+	}
+	if !l.HasRedProofs {
+		fmt.Fprintf(stdout, "RED-PROOFS header ABSENT (legacy ledger); measured %d — adopt with: rulefloor redproofs --adopt\n", m)
+		return nil
+	}
+	fmt.Fprintf(stdout, "RED-PROOFS %d, measured %d\n", l.RedProofs, m)
 	return nil
 }
 

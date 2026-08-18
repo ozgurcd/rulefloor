@@ -76,6 +76,10 @@ func appendToFile(t *testing.T, path, s string) {
 	}
 }
 
+// fixtureProof is the red-proof text fixture arms carry — arm refuses to
+// run without one.
+const fixtureProof = "fixture red-proof: watched FAIL on inverted expectation, restored"
+
 // newPWRepo builds a fixture repo with one armed Playwright-backed rule.
 func newPWRepo(t *testing.T) string {
 	t.Helper()
@@ -83,7 +87,36 @@ func newPWRepo(t *testing.T) string {
 	writeFile(t, repo, "e2e/login.spec.ts", pwFixture)
 	mustRun(t, "init", "--repo", repo)
 	mustRun(t, "declare", "Refresh token is single use.", "--id", "R-1", "--repo", repo)
-	mustRun(t, "arm", "R-1", "--check", "e2e/login.spec.ts @ chromium", "--repo", repo)
+	mustRun(t, "arm", "R-1", "--check", "e2e/login.spec.ts @ chromium", "--red-proof", fixtureProof, "--repo", repo)
+	return repo
+}
+
+// newLegacyRepo builds a repo whose ledger predates the RED-PROOFS
+// header: two armed rows (one proved, one "-"), header line stripped —
+// exactly what a tool-written pre-ratchet ledger looks like.
+func newLegacyRepo(t *testing.T) string {
+	t.Helper()
+	repo := newPWRepo(t)
+	addPWTest(t, repo, "R-2")
+	mustRun(t, "declare", "Second rule.", "--id", "R-2", "--repo", repo)
+	mustRun(t, "arm", "R-2", "--check", "e2e/login.spec.ts @ chromium", "--red-proof", fixtureProof, "--repo", repo)
+	// Hand-shape into the legacy form: R-2 unproved, no header line.
+	data, err := os.ReadFile(ledgerFP(repo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	s = strings.Replace(s, "| R-2 | Second rule. | playwright | e2e/login.spec.ts @ chromium | "+fixtureProof+" |",
+		"| R-2 | Second rule. | playwright | e2e/login.spec.ts @ chromium | - |", 1)
+	i := strings.Index(s, "RED-PROOFS: ")
+	if i < 0 {
+		t.Fatalf("expected a RED-PROOFS line to strip:\n%s", s)
+	}
+	nl := strings.IndexByte(s[i:], '\n')
+	s = s[:i] + s[i+nl+1:]
+	if err := os.WriteFile(ledgerFP(repo), []byte(s), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	return repo
 }
 
@@ -178,7 +211,7 @@ func TestFixtureTable(t *testing.T) {
 				mustRun(t, "declare", "Second rule.", "--id", "R-2", "--repo", repo)
 				addPWTest(t, repo, "R-2")
 			},
-			cmd:      []string{"arm", "R-2", "--check", "e2e/login.spec.ts @ chromium"},
+			cmd:      []string{"arm", "R-2", "--check", "e2e/login.spec.ts @ chromium", "--red-proof", fixtureProof},
 			wantCode: 0,
 			wantMsg:  "FLOOR 5",
 			post: func(t *testing.T, repo string) {
@@ -225,6 +258,41 @@ func TestFixtureTable(t *testing.T) {
 			cmd:      []string{"rehash", "R-1"},
 			wantCode: 1,
 			wantMsg:  "no-op",
+		},
+		// RED-PROOFS ratchet failure modes (THE-RED-PROOF-FLOOR).
+		{
+			name: "red-proof emptied on a proven row",
+			prep: func(t *testing.T, repo string) {
+				replaceInFile(t, ledgerFP(repo), "| "+fixtureProof+" |", "| - |")
+			},
+			wantCode: 1,
+			wantMsg:  "below RED-PROOFS",
+		},
+		{
+			name: "proven row deleted drops RED-PROOFS",
+			prep: func(t *testing.T, repo string) {
+				deleteLedgerRow(t, repo, "R-1")
+			},
+			wantCode: 1,
+			wantMsg:  "below RED-PROOFS",
+		},
+		{
+			name: "red-proofs shrink: write path never lowers RED-PROOFS",
+			prep: func(t *testing.T, repo string) {
+				replaceInFile(t, ledgerFP(repo), "RED-PROOFS: 1", "RED-PROOFS: 5")
+				mustRun(t, "declare", "Second rule.", "--id", "R-2", "--repo", repo)
+			},
+			wantCode: 1,
+			wantMsg:  "below RED-PROOFS 5",
+			post: func(t *testing.T, repo string) {
+				data, err := os.ReadFile(ledgerFP(repo))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(string(data), "RED-PROOFS: 5") {
+					t.Fatalf("RED-PROOFS was lowered by a write:\n%s", data)
+				}
+			},
 		},
 	}
 	for _, tc := range cases {

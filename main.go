@@ -25,8 +25,10 @@ Usage:
   rulefloor list                              [--repo PATH]
   rulefloor show ID                           [--repo PATH]
   rulefloor unarmed                           [--repo PATH]
+  rulefloor unproved                          [--repo PATH]
+  rulefloor redproofs                         [--adopt] [--repo PATH]
   rulefloor declare "sentence" --id ID        [--red-proof TEXT] [--repo PATH]
-  rulefloor arm ID --check "file @ profile"   [--red-proof TEXT] [--repo PATH]
+  rulefloor arm ID --check "file @ profile"   --red-proof TEXT [--repo PATH]
   rulefloor rehash ID                         [--repo PATH]
   rulefloor check                             [--repo PATH] [--report pw.json] [--all "repo1,repo2"]
                                               [--run-profile NAME [--tags T]]
@@ -57,17 +59,20 @@ var flagTakesValue = map[string]bool{
 	"--all":         true,
 	"--run-profile": true,
 	"--tags":        true,
+	"--adopt":       false,
 }
 
 var allowedFlags = map[string]map[string]bool{
-	"init":    {"--repo": true},
-	"list":    {"--repo": true},
-	"show":    {"--repo": true},
-	"unarmed": {"--repo": true},
-	"declare": {"--repo": true, "--id": true, "--red-proof": true},
-	"arm":     {"--repo": true, "--check": true, "--red-proof": true},
-	"rehash":  {"--repo": true},
-	"check":   {"--repo": true, "--report": true, "--all": true, "--run-profile": true, "--tags": true},
+	"init":      {"--repo": true},
+	"list":      {"--repo": true},
+	"show":      {"--repo": true},
+	"unarmed":   {"--repo": true},
+	"unproved":  {"--repo": true},
+	"redproofs": {"--repo": true, "--adopt": true},
+	"declare":   {"--repo": true, "--id": true, "--red-proof": true},
+	"arm":       {"--repo": true, "--check": true, "--red-proof": true},
+	"rehash":    {"--repo": true},
+	"check":     {"--repo": true, "--report": true, "--all": true, "--run-profile": true, "--tags": true},
 }
 
 // parseArgs splits args into flag values and positionals. Flags may appear
@@ -175,6 +180,16 @@ func dispatch(args []string, stdout io.Writer) error {
 			return err
 		}
 		return cmdUnarmed(repo, stdout)
+	case "unproved":
+		if err := want(0); err != nil {
+			return err
+		}
+		return cmdUnproved(repo, stdout)
+	case "redproofs":
+		if err := want(0); err != nil {
+			return err
+		}
+		return cmdRedProofs(repo, flags["--adopt"] == "true", stdout)
 	case "declare":
 		if err := want(1); err != nil {
 			return err

@@ -64,9 +64,11 @@ func TestRefusals(t *testing.T) {
 	}{
 		{"init when ledger exists", []string{"init"}, 1, "already exists"},
 		{"declare duplicate ID", []string{"declare", "Again.", "--id", "R-1"}, 1, "already exists"},
-		{"arm already armed", []string{"arm", "R-1", "--check", "e2e/login.spec.ts @ chromium"}, 1, "already armed"},
-		{"arm unknown rule", []string{"arm", "R-7", "--check", "e2e/login.spec.ts @ chromium"}, 1, "no rule R-7"},
-		{"arm unknown check kind", []string{"arm", "R-1", "--check", "notes.txt @ x"}, 2, "CANNOT-EVALUATE"},
+		{"arm already armed", []string{"arm", "R-1", "--check", "e2e/login.spec.ts @ chromium", "--red-proof", fixtureProof}, 1, "already armed"},
+		{"arm unknown rule", []string{"arm", "R-7", "--check", "e2e/login.spec.ts @ chromium", "--red-proof", fixtureProof}, 1, "no rule R-7"},
+		{"arm unknown check kind", []string{"arm", "R-1", "--check", "notes.txt @ x", "--red-proof", fixtureProof}, 2, "CANNOT-EVALUATE"},
+		{"arm without red-proof refused", []string{"arm", "R-7", "--check", "e2e/login.spec.ts @ chromium"}, 2, "--red-proof is required"},
+		{"arm with dash red-proof refused", []string{"arm", "R-7", "--check", "e2e/login.spec.ts @ chromium", "--red-proof", "-"}, 2, `not the "-" placeholder`},
 		{"declare invalid ID", []string{"declare", "Bad.", "--id", "lower-1"}, 2, "invalid ID"},
 		{"rehash unknown rule", []string{"rehash", "R-7"}, 1, "no rule R-7"},
 		{"check --report with --all", []string{"check", "--report", "x.json", "--all", "a,b"}, 2, "cannot be combined"},
@@ -89,11 +91,11 @@ func TestArmRefusesSkippedOrUntaggedTest(t *testing.T) {
 	writeFile(t, repo, "e2e/a.spec.ts", strings.Replace(pwFixture, "test('refresh", "test.skip('refresh", 1))
 	mustRun(t, "init", "--repo", repo)
 	mustRun(t, "declare", "Rule one.", "--id", "R-1", "--repo", repo)
-	if code, out := run2(t, "arm", "R-1", "--check", "e2e/a.spec.ts @ chromium", "--repo", repo); code != 1 || !strings.Contains(out, ".skip") {
+	if code, out := run2(t, "arm", "R-1", "--check", "e2e/a.spec.ts @ chromium", "--red-proof", fixtureProof, "--repo", repo); code != 1 || !strings.Contains(out, ".skip") {
 		t.Fatalf("arm on skipped test: exit %d:\n%s", code, out)
 	}
 	mustRun(t, "declare", "Rule two.", "--id", "R-2", "--repo", repo)
-	if code, out := run2(t, "arm", "R-2", "--check", "e2e/a.spec.ts @ chromium", "--repo", repo); code != 1 || !strings.Contains(out, "not found") {
+	if code, out := run2(t, "arm", "R-2", "--check", "e2e/a.spec.ts @ chromium", "--red-proof", fixtureProof, "--repo", repo); code != 1 || !strings.Contains(out, "not found") {
 		t.Fatalf("arm on missing tag: exit %d:\n%s", code, out)
 	}
 }
@@ -119,7 +121,7 @@ func TestGoKindEndToEnd(t *testing.T) {
 	writeFile(t, repo, "refresh_test.go", goFixture)
 	mustRun(t, "init", "--repo", repo)
 	mustRun(t, "declare", "Refresh tokens are single use.", "--id", "G-1", "--repo", repo)
-	mustRun(t, "arm", "G-1", "--check", "refresh_test.go @ unit", "--repo", repo)
+	mustRun(t, "arm", "G-1", "--check", "refresh_test.go @ unit", "--red-proof", fixtureProof, "--repo", repo)
 	out := mustRun(t, "check", "--repo", repo)
 	if !strings.Contains(out, "PASS G-1") {
 		t.Fatalf("check output:\n%s", out)
@@ -145,7 +147,7 @@ func TestSkippy(t *testing.T) {
 `)
 	mustRun(t, "init", "--repo", repo)
 	mustRun(t, "declare", "Skipped rule.", "--id", "G-2", "--repo", repo)
-	if code, out := run2(t, "arm", "G-2", "--check", "skip_test.go @ unit", "--repo", repo); code != 1 || !strings.Contains(out, "t.Skip") {
+	if code, out := run2(t, "arm", "G-2", "--check", "skip_test.go @ unit", "--red-proof", fixtureProof, "--repo", repo); code != 1 || !strings.Contains(out, "t.Skip") {
 		t.Fatalf("arm on t.Skip test: exit %d:\n%s", code, out)
 	}
 }
@@ -351,11 +353,11 @@ func TestGoProfileStaticAndRunProfile(t *testing.T) {
 	mustRun(t, "init", "--repo", repo)
 	mustRun(t, "declare", "The DB teeth hold at the schema layer.", "--id", "IG-1", "--repo", repo)
 	// Arming a skipping test at the unit profile stays REFUSED.
-	if code, out := run2(t, "arm", "IG-1", "--check", "itg_test.go @ unit", "--repo", repo); code != 1 || !strings.Contains(out, "t.Skip") {
+	if code, out := run2(t, "arm", "IG-1", "--check", "itg_test.go @ unit", "--red-proof", fixtureProof, "--repo", repo); code != 1 || !strings.Contains(out, "t.Skip") {
 		t.Fatalf("unit arm of skipping test: exit %d:\n%s", code, out)
 	}
 	// The integration profile accepts the guarded skip and arms.
-	mustRun(t, "arm", "IG-1", "--check", "itg_test.go @ integration", "--repo", repo)
+	mustRun(t, "arm", "IG-1", "--check", "itg_test.go @ integration", "--red-proof", fixtureProof, "--repo", repo)
 	// Plain check is STATIC-ONLY for the row: green with no env, no run.
 	mustRun(t, "check", "--repo", repo)
 	// Run-profile with the precondition absent: the runtime skip is fatal.
@@ -383,7 +385,7 @@ func TestRunProfileLeavesUnitRowsUnchanged(t *testing.T) {
 	writeFile(t, repo, "refresh_test.go", goFixture)
 	mustRun(t, "init", "--repo", repo)
 	mustRun(t, "declare", "Refresh tokens are single use.", "--id", "G-1", "--repo", repo)
-	mustRun(t, "arm", "G-1", "--check", "refresh_test.go @ unit", "--repo", repo)
+	mustRun(t, "arm", "G-1", "--check", "refresh_test.go @ unit", "--red-proof", fixtureProof, "--repo", repo)
 	// Unit rows still EXECUTE under --run-profile mode, exactly as in
 	// plain check: a failing unit test fails the profile run too.
 	t.Setenv("RULEFLOOR_FIXTURE_FAIL", "1")
@@ -408,5 +410,133 @@ func TestVersionOutputShape(t *testing.T) {
 		if out != "rulefloor dev\n" {
 			t.Fatalf("%s output = %q, want %q (the release build stamps main.version via -ldflags)", invocation, out, "rulefloor dev\n")
 		}
+	}
+}
+
+// ---- THE-RED-PROOF-FLOOR ----
+
+func TestRedProofsStatusAdoptAndUnproved(t *testing.T) {
+	repo := newLegacyRepo(t) // R-1 proved, R-2 armed-unproved, NO header
+
+	// Status on a legacy ledger names the absence and the measurement.
+	out := mustRun(t, "redproofs", "--repo", repo)
+	if !strings.Contains(out, "ABSENT") || !strings.Contains(out, "measured 1") {
+		t.Fatalf("legacy status output:\n%s", out)
+	}
+
+	// unproved lists exactly the "-" row.
+	out = mustRun(t, "unproved", "--repo", repo)
+	if !strings.Contains(out, "R-2") || strings.Contains(out, "R-1 ") {
+		t.Fatalf("unproved output:\n%s", out)
+	}
+	if !strings.Contains(out, "unproved: 1 of 2 armed rows") {
+		t.Fatalf("unproved summary:\n%s", out)
+	}
+
+	// Adoption writes the MEASURED count — never invented history.
+	out = mustRun(t, "redproofs", "--adopt", "--repo", repo)
+	if !strings.Contains(out, "adopted RED-PROOFS: 1") {
+		t.Fatalf("adopt output:\n%s", out)
+	}
+	data, err := os.ReadFile(ledgerFP(repo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "RED-PROOFS: 1") {
+		t.Fatalf("header missing after adopt:\n%s", data)
+	}
+	// The "-" row stayed "-".
+	if !strings.Contains(string(data), "| - |") {
+		t.Fatalf("unproved row was backfilled:\n%s", data)
+	}
+
+	// Second adoption refused.
+	if code, out := run2(t, "redproofs", "--adopt", "--repo", repo); code != 1 || !strings.Contains(out, "already present") {
+		t.Fatalf("double adopt: exit %d:\n%s", code, out)
+	}
+
+	// check reports the ratchet on its OK line.
+	out = mustRun(t, "check", "--repo", repo)
+	if !strings.Contains(out, "RED-PROOFS 1 (measured 1)") {
+		t.Fatalf("check OK line:\n%s", out)
+	}
+}
+
+func TestLegacyLedgerCheckStillGreenWithoutHeader(t *testing.T) {
+	// A pre-ratchet ledger keeps working: no header, no ratchet clause.
+	repo := newLegacyRepo(t)
+	out := mustRun(t, "check", "--repo", repo)
+	if !strings.Contains(out, "check OK") || strings.Contains(out, "RED-PROOFS") {
+		t.Fatalf("legacy check output:\n%s", out)
+	}
+}
+
+const vitestFixture = `import { describe, expect, it } from "vitest";
+
+describe("wire read", () => {
+  it("mappers read only the pinned keys [V-1]", () => {
+    expect(1).toBe(1);
+  });
+});
+`
+
+func TestVitestKindEndToEnd(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "src/__tests__/wire.test.ts", vitestFixture)
+	mustRun(t, "init", "--repo", repo)
+	mustRun(t, "declare", "Mappers read only the pinned keys.", "--id", "V-1", "--repo", repo)
+	mustRun(t, "arm", "V-1", "--check", "src/__tests__/wire.test.ts @ vitest", "--red-proof", fixtureProof, "--repo", repo)
+	out := mustRun(t, "show", "V-1", "--repo", repo)
+	if !strings.Contains(out, "enforced-by: vitest") {
+		t.Fatalf("show output:\n%s", out)
+	}
+	out = mustRun(t, "check", "--repo", repo)
+	if !strings.Contains(out, "PASS V-1") || !strings.Contains(out, "RED-PROOFS 1 (measured 1)") {
+		t.Fatalf("check output:\n%s", out)
+	}
+	// Static tamper bites: vitest rows hash their tagged body too.
+	replaceInFile(t, filepath.Join(repo, "src/__tests__/wire.test.ts"), "toBe(1)", "toBe(2)")
+	if code, out := run2(t, "check", "--repo", repo); code != 1 || !strings.Contains(out, "hash mismatch") {
+		t.Fatalf("tampered vitest body: exit %d:\n%s", code, out)
+	}
+	// .skip on the tagged it() bites.
+	replaceInFile(t, filepath.Join(repo, "src/__tests__/wire.test.ts"), "toBe(2)", "toBe(1)")
+	replaceInFile(t, filepath.Join(repo, "src/__tests__/wire.test.ts"), "it(\"mappers", "it.skip(\"mappers")
+	if code, out := run2(t, "check", "--repo", repo); code != 1 || !strings.Contains(out, ".skip is set") {
+		t.Fatalf("skipped vitest test: exit %d:\n%s", code, out)
+	}
+}
+
+func TestLedgerRoundTripWithRedProofs(t *testing.T) {
+	l := &Ledger{Floor: 1, RedProofs: 1, HasRedProofs: true, Rows: []Row{
+		{"R-1", "Rule one.", "vitest", "src/a.test.ts @ vitest", "watched FAIL, restored", "abcdef012345"},
+	}}
+	got, err := parseLedger(l.serialize())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.HasRedProofs || got.RedProofs != 1 || got.Rows[0] != l.Rows[0] {
+		t.Fatalf("round trip mismatch: %+v", got)
+	}
+}
+
+func TestParseLedgerRejectsBadRedProofsLine(t *testing.T) {
+	header := "| ID | one-sentence rule | enforced-by | check | red-proof | hash |\n|---|---|---|---|---|---|\n"
+	cases := []struct {
+		name string
+		data string
+		want string
+	}{
+		{"invalid value", "FLOOR: 0\nRED-PROOFS: x\n" + header, "invalid RED-PROOFS"},
+		{"negative value", "FLOOR: 0\nRED-PROOFS: -1\n" + header, "invalid RED-PROOFS"},
+		{"duplicate line", "FLOOR: 0\nRED-PROOFS: 1\nRED-PROOFS: 2\n" + header, "duplicate RED-PROOFS"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := parseLedger(tc.data)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want substring %q", err, tc.want)
+			}
+		})
 	}
 }

@@ -80,6 +80,15 @@ func checkRepo(repo, reportPath, runProfile, tags string, stdout io.Writer) (int
 	if len(l.Rows) < l.Floor {
 		prob("ledger: %d rows is below FLOOR %d (rows deleted or FLOOR tampered)", len(l.Rows), l.Floor)
 	}
+	// RED-PROOFS ratchet: the measured count of red-proved armed rows may
+	// never drop below the header. A drop means a proof was emptied to
+	// "-" or a proven row was deleted. (Like FLOOR, a hand-LOWERED header
+	// is invisible here — the ledger is tool-written by contract.)
+	if l.HasRedProofs {
+		if m := l.measuredRedProofs(); m < l.RedProofs {
+			prob("ledger: %d red-proved armed rows is below RED-PROOFS %d (a proof was emptied or a proven row deleted)", m, l.RedProofs)
+		}
+	}
 	var report map[string][]string
 	if reportPath != "" {
 		report, err = parsePWReport(reportPath)
@@ -115,7 +124,12 @@ func checkRepo(repo, reportPath, runProfile, tags string, stdout io.Writer) (int
 		prob("%s", o)
 	}
 	if problems == 0 {
-		fmt.Fprintf(stdout, "check OK: %d rows (%d armed), FLOOR %d\n", len(l.Rows), armed, l.Floor)
+		if l.HasRedProofs {
+			fmt.Fprintf(stdout, "check OK: %d rows (%d armed), FLOOR %d, RED-PROOFS %d (measured %d)\n",
+				len(l.Rows), armed, l.Floor, l.RedProofs, l.measuredRedProofs())
+		} else {
+			fmt.Fprintf(stdout, "check OK: %d rows (%d armed), FLOOR %d\n", len(l.Rows), armed, l.Floor)
+		}
 	}
 	return problems, nil
 }

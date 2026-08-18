@@ -36,6 +36,14 @@ func (r *Row) armed() bool { return r.Check != "NONE" }
 type Ledger struct {
 	Floor int
 	Rows  []Row
+	// RedProofs is the RED-PROOFS ratchet: the floor for the number of
+	// armed rows whose red-proof cell is a real proof (not "-").
+	// Monotonic like Floor — nothing the tool does lowers it.
+	// HasRedProofs is false for a legacy ledger that has not adopted the
+	// header yet (see `rulefloor redproofs --adopt`); every write
+	// operation adopts it too, measuring the current count.
+	RedProofs    int
+	HasRedProofs bool
 }
 
 func ledgerPath(repo string) string { return filepath.Join(repo, ledgerFile) }
@@ -53,6 +61,35 @@ func (l *Ledger) find(id string) *Row {
 func (l *Ledger) raiseFloor(n int) {
 	if n > l.Floor {
 		l.Floor = n
+	}
+}
+
+// measuredRedProofs counts armed rows whose red-proof cell carries a real
+// proof — anything but the "-" placeholder. The tool cannot judge the
+// text's quality; it ratchets the count.
+func (l *Ledger) measuredRedProofs() int {
+	n := 0
+	for _, r := range l.Rows {
+		if r.armed() && r.RedProof != "-" {
+			n++
+		}
+	}
+	return n
+}
+
+// maintainRedProofs adopts the RED-PROOFS header (legacy ledgers) or
+// raises it to the measured count. It never lowers it: a hand-raised
+// value stays, and check fails until the measurement catches up —
+// exactly the FLOOR discipline.
+func (l *Ledger) maintainRedProofs() {
+	m := l.measuredRedProofs()
+	if !l.HasRedProofs {
+		l.RedProofs = m
+		l.HasRedProofs = true
+		return
+	}
+	if m > l.RedProofs {
+		l.RedProofs = m
 	}
 }
 
@@ -79,7 +116,11 @@ func saveLedger(repo string, l *Ledger) error {
 
 func (l *Ledger) serialize() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "FLOOR: %d\n\n", l.Floor)
+	fmt.Fprintf(&b, "FLOOR: %d\n", l.Floor)
+	if l.HasRedProofs {
+		fmt.Fprintf(&b, "RED-PROOFS: %d\n", l.RedProofs)
+	}
+	b.WriteString("\n")
 	fmt.Fprintf(&b, "| %s |\n", strings.Join(headerCells, " | "))
 	fmt.Fprintf(&b, "|%s\n", strings.Repeat("---|", len(headerCells)))
 	for _, r := range l.Rows {
@@ -112,6 +153,20 @@ func parseLedger(data string) (*Ledger, error) {
 			l.Floor = n
 			stage = 1
 		case 1:
+			// The optional RED-PROOFS ratchet line sits between FLOOR and
+			// the table header. Absent on legacy ledgers.
+			if num, ok := strings.CutPrefix(line, "RED-PROOFS: "); ok {
+				if l.HasRedProofs {
+					return nil, fmt.Errorf("line %d: duplicate RED-PROOFS line", ln)
+				}
+				n, err := strconv.Atoi(strings.TrimSpace(num))
+				if err != nil || n < 0 {
+					return nil, fmt.Errorf("line %d: invalid RED-PROOFS value %q", ln, num)
+				}
+				l.RedProofs = n
+				l.HasRedProofs = true
+				continue
+			}
 			cells, err := splitRowLine(line)
 			if err != nil || len(cells) != len(headerCells) {
 				return nil, fmt.Errorf("line %d: malformed header", ln)
