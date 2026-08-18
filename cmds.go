@@ -260,7 +260,7 @@ func looksLikeRealProof(cell string) bool {
 // tool can SEE is a non-proof (a "blocked:" pre-arming note or a
 // dateless cell) — never a genuine dated proof. Raises RED-PROOFS
 // through the same maintain path as arm.
-func cmdProve(repo, id, redProof string, replace bool, stdout io.Writer) error {
+func cmdProve(repo, id, redProof string, replace, force bool, stdout io.Writer) error {
 	if redProof == "" {
 		return fatalf("prove: --red-proof is required — describe the watched failure")
 	}
@@ -282,6 +282,14 @@ func cmdProve(repo, id, redProof string, replace bool, stdout io.Writer) error {
 		return failf("refusing: rule %s is not armed (arm records its proof itself)", id)
 	}
 	switch {
+	case force:
+		// --force overwrites ANY red-proof, including a genuine dated one.
+		// It exists for a proof that is REAL but NOT row-specific — e.g.
+		// byte-identical text copied across two different rules, where the
+		// honest fix is to RE-WATCH each rule's own mutation and record it.
+		// --replace cannot reach a dated cell, and cross-row duplicate
+		// detection cannot either (once the first row is corrected the second
+		// is no longer a duplicate). Loud and explicit; never implicit.
 	case r.RedProof == "-":
 		// The ordinary burndown path: an unproved "-" cell.
 	case replace && !looksLikeRealProof(r.RedProof):
@@ -289,9 +297,9 @@ func cmdProve(repo, id, redProof string, replace bool, stdout io.Writer) error {
 		// "blocked:" pre-arming note or a dateless cell). Refuses a
 		// genuine dated proof below.
 	case replace:
-		return failf("refusing: rule %s carries a genuine dated red-proof — --replace only overwrites a non-proof (\"-\", \"blocked:…\", or a dateless cell)", id)
+		return failf("refusing: rule %s carries a genuine dated red-proof — --replace only overwrites a non-proof (\"-\", \"blocked:…\", or a dateless cell); use --force to overwrite a real-but-not-row-specific proof after re-watching", id)
 	default:
-		return failf("refusing: rule %s already carries a red-proof (recorded history is not replaced; use --replace only for a pre-arming/dateless non-proof)", id)
+		return failf("refusing: rule %s already carries a red-proof (recorded history is not replaced; use --replace for a pre-arming/dateless non-proof, or --force after re-watching a real-but-not-row-specific proof)", id)
 	}
 	old := r.RedProof
 	r.RedProof = redProof
@@ -299,9 +307,12 @@ func cmdProve(repo, id, redProof string, replace bool, stdout io.Writer) error {
 	if err := saveLedger(repo, l); err != nil {
 		return err
 	}
-	if replace && old != "-" {
+	switch {
+	case force && old != "-":
+		fmt.Fprintf(stdout, "proved %s (FORCED overwrite of prior proof %q); RED-PROOFS %d\n", id, old, l.RedProofs)
+	case replace && old != "-":
 		fmt.Fprintf(stdout, "proved %s (replaced non-proof %q); RED-PROOFS %d\n", id, old, l.RedProofs)
-	} else {
+	default:
 		fmt.Fprintf(stdout, "proved %s; RED-PROOFS %d\n", id, l.RedProofs)
 	}
 	return nil

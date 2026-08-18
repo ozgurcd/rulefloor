@@ -262,7 +262,7 @@ Every command takes `--repo PATH` (default `.`).
 | `redproofs [--adopt]` | Ratchet status; `--adopt` writes `RED-PROOFS:` onto a legacy ledger at the **measured** count. |
 | `declare "sentence" --id ID` | Append a declared row; raise FLOOR. Optional `--red-proof TEXT`. |
 | `arm ID --check "file @ profile" --red-proof TEXT` | Pin the tagged test's hash; set enforced-by; raise FLOOR and RED-PROOFS. Refuses skipped tests. `--red-proof` is **required**. |
-| `prove ID --red-proof TEXT [--replace]` | Record a watched proof on an already-armed `-` row (the debt burndown path); raises RED-PROOFS. Refuses to replace an existing proof — except with `--replace`, which overwrites ONLY a cell the tool can see is a non-proof (a `blocked:…` pre-arming note or a dateless cell), never a genuine dated proof. |
+| `prove ID --red-proof TEXT [--replace] [--force]` | Record a watched proof on an already-armed `-` row (the debt burndown path); raises RED-PROOFS. Refuses to replace an existing proof — except with `--replace`, which overwrites ONLY a cell the tool can see is a non-proof (a `blocked:…` pre-arming note or a dateless cell), never a genuine dated proof. `--force` overwrites ANY cell, including a genuine dated proof; it exists for a proof that is real but NOT row-specific (e.g. byte-identical text copied across two rules) where the fix is to re-watch each rule's own mutation. Loud and explicit; never raises RED-PROOFS (the row already counted). |
 | `rehash ID` | Accept a reviewed body change. Refuses a no-op, refuses skipped tests. |
 | `check [--report pw.json] [--all "repo1,repo2"]` | Verify everything (below). |
 
@@ -274,7 +274,8 @@ Refusals you will meet, all deliberate:
   that has `.skip`/`.only` or calls `t.Skip*` · `rehash` when nothing
   changed · `redproofs --adopt` when the header already exists ·
   `prove --replace` over a genuine dated proof (only a `blocked:…` or
-  dateless non-proof may be overwritten).
+  dateless non-proof may be overwritten — a real-but-not-row-specific
+  proof needs `--force` after re-watching).
 
 ### The red-proof obligation
 

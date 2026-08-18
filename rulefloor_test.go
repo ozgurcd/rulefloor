@@ -628,6 +628,31 @@ func TestProveReplaceOnlyOverwritesNonProofs(t *testing.T) {
 	mustRun(t, "check", "--repo", repo)
 }
 
+func TestProveForceOverwritesGenuineProof(t *testing.T) {
+	repo := newLegacyRepo(t)
+	mustRun(t, "redproofs", "--adopt", "--repo", repo)
+
+	// Record a genuine dated proof on R-2.
+	mustRun(t, "prove", "R-2", "--red-proof", "mutation red-proved 2026-08-18: predicate inverted, watched FAIL, restored", "--repo", repo)
+
+	// --replace refuses it (it is a real dated proof) and points at --force.
+	if code, out := run2(t, "prove", "R-2", "--red-proof", "different", "--replace", "--repo", repo); code != 1 || !strings.Contains(out, "use --force") {
+		t.Fatalf("--replace over a dated proof must refuse and name --force: exit %d:\n%s", code, out)
+	}
+
+	// --force overwrites the genuine dated proof, loudly naming the prior text.
+	out := mustRun(t, "prove", "R-2", "--red-proof", "mutation red-proved 2026-08-18: R-2-specific mutation, watched FAIL, restored", "--force", "--repo", repo)
+	if !strings.Contains(out, "FORCED overwrite") || !strings.Contains(out, "predicate inverted") {
+		t.Fatalf("--force must overwrite and name the prior proof:\n%s", out)
+	}
+
+	// RED-PROOFS is unchanged by a force overwrite (the row already counted).
+	if code, out := run2(t, "redproofs", "--repo", repo); code != 0 || !strings.Contains(out, "RED-PROOFS") {
+		t.Fatalf("redproofs after force: exit %d:\n%s", code, out)
+	}
+	mustRun(t, "check", "--repo", repo)
+}
+
 func TestLooksLikeRealProof(t *testing.T) {
 	real := []string{
 		"mutation red-proved 2026-08-18: watched FAIL",
