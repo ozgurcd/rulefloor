@@ -56,11 +56,15 @@ an explicit, auditable step, never an automatic one.
 
 ## Install
 
-Homebrew (the tap goes live right after the repo):
+Homebrew:
 
 ```bash
 brew install ozgurcd/tap/rulefloor
 ```
+
+Releases and per-version changes are recorded in
+[CHANGELOG.md](CHANGELOG.md). Note that the tap serves the latest
+published release, which may trail this repository's main branch.
 
 Or with Go:
 
