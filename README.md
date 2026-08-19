@@ -2,8 +2,8 @@
 
 **A machine-checked rule ledger for your repository.**
 
-You have rules you never want to lose: *"refresh tokens are single use"*,
-*"lockout looks exactly like a wrong password"*. Each one is enforced by a
+You have rules you never want to lose: *"an emptied cart totals zero"*,
+*"invoice numbers are never reused"*. Each one is enforced by a
 test — until someone edits the test, adds a `.skip`, or deletes it, and the
 rule silently stops existing. rulefloor makes that decay loud: every rule is
 pinned to the exact body of the test that proves it, and `check` fails the
@@ -14,9 +14,9 @@ and written **only** by this tool. Stdlib-only Go, no dependencies.
 
 ```
 $ rulefloor check
-PASS SEC-1 (e2e/login.spec.ts @ chromium)
-PASS SEC-2 (lockout_test.go @ unit)
-check OK: 2 rows (2 armed), FLOOR 2
+PASS CART-1 (e2e/cart.spec.ts @ chromium)
+PASS INV-1 (invoice_test.go @ unit)
+check OK: 2 rows (2 armed), FLOOR 2, RED-PROOFS 2 (measured 2)
 ```
 
 ---
@@ -28,6 +28,7 @@ check OK: 2 rows (2 armed), FLOOR 2
 - [Command reference](#command-reference)
 - [`check`, in depth](#check-in-depth)
 - [Wiring into your entrypoints](#wiring-into-your-entrypoints)
+- [What belongs here, what belongs in your repo](#what-belongs-here-what-belongs-in-your-repo)
 - [Exit codes](#exit-codes)
 - [Troubleshooting](#troubleshooting)
 - [Guarantees and honest limits](#guarantees-and-honest-limits)
@@ -41,9 +42,11 @@ Three verbs, one loop:
 
 1. **`declare`** a rule — one sentence, one ID. It sits in the ledger as
    *declared* (visible debt, not yet enforced).
-2. **`arm`** it — point the rule at a tagged test. rulefloor extracts the
-   test's body, stores the first 12 hex chars of its sha256, and raises the
-   FLOOR (the minimum row count) so the row can never quietly vanish.
+2. **`arm`** it — point the rule at a tagged test and record where you
+   watched that test actually fail (`--red-proof`, required). rulefloor
+   extracts the test's body, stores the first 12 hex chars of its sha256,
+   and raises the FLOOR (the minimum row count) so the row can never
+   quietly vanish.
 3. **`check`** — re-derives everything from the working tree and compares it
    to the ledger. Any drift is a failure: changed body, skipped test, missing
    tag, deleted row, tag without a row.
@@ -66,19 +69,17 @@ go install github.com/ozgurcd/rulefloor@latest
 ```
 
 Or build from source. **Requires Go 1.26.6 or newer** — the module's
-`go` directive is `1.26.6`, a pinned floor. Stdlib only, no
-dependencies. This floor matters beyond this repo: the entrypoint gates
-below build this tool on first use, and a toolchain under the floor (that
-cannot fetch 1.26.6 via `GOTOOLCHAIN=auto`) turns those gates into
-CANNOT-EVALUATE, which is a hard failure by design.
+`go` directive is `1.26.6`, a pinned floor. A toolchain below it that
+cannot fetch 1.26.6 via `GOTOOLCHAIN=auto` will fail to build the tool,
+deliberately: an under-floor build environment should fail loudly, not
+produce a subtly different binary.
 
 ```bash
 git clone https://github.com/ozgurcd/rulefloor.git
 cd rulefloor && go build -o rulefloor .
 ```
 
-Put the binary on your PATH, or call it by path — the entrypoint wiring below
-builds it on first use automatically.
+Put the binary on your PATH, or call it by path.
 
 ## Five-minute tutorial
 
@@ -87,93 +88,96 @@ Every transcript below is a real run, unedited.
 Start with a repo containing a Playwright spec and a Go test:
 
 ```ts
-// e2e/login.spec.ts — the tag is [SEC-1] in the title
-test('a refresh token can only be used once [SEC-1]', async ({ page }) => {
-  await page.goto('/login');
-  // ... sign in, capture the refresh token, use it twice ...
-  expect(secondUseStatus).toBe(401);
+// e2e/cart.spec.ts — the tag is [CART-1] in the title
+test('an emptied cart totals zero [CART-1]', async ({ page }) => {
+  await page.goto('/cart');
+  // ... add two items, remove both ...
+  expect(await total.textContent()).toBe('0.00');
 });
 ```
 
 ```go
-// lockout_test.go — the tag is the comment line directly above the func
-// RULE: SEC-2
-func TestLockoutLooksLikeWrongPassword(t *testing.T) {
-	if answerForLockedOut() != answerForWrongPassword() {
-		t.Fatal("lockout must be indistinguishable from a wrong password")
+// invoice_test.go — the tag is the comment line directly above the func
+// RULE: INV-1
+func TestInvoiceNumbersAreNeverReused(t *testing.T) {
+	if issueInvoice() == issueInvoice() {
+		t.Fatal("two invoices must never share a number")
 	}
 }
 ```
 
-**Create the ledger, declare, arm:**
+**Create the ledger, declare, arm.** `arm` requires `--red-proof` — a note
+of where you watched this test actually fail (see
+[the red-proof obligation](#the-red-proof-obligation)):
 
 ```
 $ rulefloor init
-initialized RULE-FLOOR.md (FLOOR: 0)
-$ rulefloor declare "Refresh tokens are single use." --id SEC-1
-declared SEC-1 (unarmed); 1 rows, FLOOR 1
-$ rulefloor declare "Lockout answers exactly like a wrong password." --id SEC-2
-declared SEC-2 (unarmed); 2 rows, FLOOR 2
-$ rulefloor arm SEC-1 --check "e2e/login.spec.ts @ chromium"
-armed SEC-1: e2e/login.spec.ts @ chromium (hash a8fc29914de5); FLOOR 2
-$ rulefloor arm SEC-2 --check "lockout_test.go @ unit"
-armed SEC-2: lockout_test.go @ unit (hash eec4772a9625); FLOOR 2
+initialized RULE-FLOOR.md (FLOOR: 0, RED-PROOFS: 0)
+$ rulefloor declare "An emptied cart shows a zero total." --id CART-1
+declared CART-1 (unarmed); 1 rows, FLOOR 1
+$ rulefloor declare "Invoice numbers are never reused." --id INV-1
+declared INV-1 (unarmed); 2 rows, FLOOR 2
+$ rulefloor arm CART-1 --check "e2e/cart.spec.ts @ chromium" --red-proof "seen red 2026-08-19: zero-total assertion inverted, spec watched failing, restored"
+armed CART-1: e2e/cart.spec.ts @ chromium (hash fca893d6ef24); FLOOR 2, RED-PROOFS 1
+$ rulefloor arm INV-1 --check "invoice_test.go @ unit" --red-proof "seen red 2026-08-19: reuse guard removed, test watched failing, restored"
+armed INV-1: invoice_test.go @ unit (hash 0c13dd2998ce); FLOOR 2, RED-PROOFS 2
 $ rulefloor check
-PASS SEC-1 (e2e/login.spec.ts @ chromium)
-PASS SEC-2 (lockout_test.go @ unit)
-check OK: 2 rows (2 armed), FLOOR 2
+PASS CART-1 (e2e/cart.spec.ts @ chromium)
+PASS INV-1 (invoice_test.go @ unit)
+check OK: 2 rows (2 armed), FLOOR 2, RED-PROOFS 2 (measured 2)
 ```
 
 The ledger now reads:
 
 ```
 FLOOR: 2
+RED-PROOFS: 2
 
 | ID | one-sentence rule | enforced-by | check | red-proof | hash |
 |---|---|---|---|---|---|
-| SEC-1 | Refresh tokens are single use. | playwright | e2e/login.spec.ts @ chromium | - | a8fc29914de5 |
-| SEC-2 | Lockout answers exactly like a wrong password. | go-test | lockout_test.go @ unit | - | eec4772a9625 |
+| CART-1 | An emptied cart shows a zero total. | playwright | e2e/cart.spec.ts @ chromium | seen red 2026-08-19: zero-total assertion inverted, spec watched failing, restored | fca893d6ef24 |
+| INV-1 | Invoice numbers are never reused. | go-test | invoice_test.go @ unit | seen red 2026-08-19: reuse guard removed, test watched failing, restored | 0c13dd2998ce |
 ```
 
-**Now someone weakens the assertion** (`toBe(401)` → `toBe(200)`):
+**Now someone weakens the assertion** (`toBe('0.00')` → `toContain('0')`):
 
 ```
 $ rulefloor check
-FAIL SEC-1: hash mismatch: ledger a8fc29914de5, actual 817a26be968d (body changed; review, then rehash)
-PASS SEC-2 (lockout_test.go @ unit)
+FAIL CART-1: hash mismatch: ledger fca893d6ef24, actual 172395533814 (body changed; review, then rehash)
+PASS INV-1 (invoice_test.go @ unit)
 rulefloor: check FAILED: 1 problem(s) in .    # exit 1
 ```
 
 **Or skips the test** (`test(` → `test.skip(`):
 
 ```
-FAIL SEC-1: .skip is set on the tagged test
-FAIL SEC-1: hash mismatch: ledger a8fc29914de5, actual 0c44037af79f (body changed; review, then rehash)
-PASS SEC-2 (lockout_test.go @ unit)
+FAIL CART-1: .skip is set on the tagged test
+FAIL CART-1: hash mismatch: ledger fca893d6ef24, actual c77b2f2d3138 (body changed; review, then rehash)
+PASS INV-1 (invoice_test.go @ unit)
 rulefloor: check FAILED: 2 problem(s) in .    # exit 1
 ```
 
 **A reviewed, legitimate edit is accepted explicitly:**
 
 ```
-$ rulefloor rehash SEC-1
-rehashed SEC-1: a8fc29914de5 -> 817a26be968d
+$ rulefloor rehash CART-1
+rehashed CART-1: fca893d6ef24 -> 172395533814
 $ rulefloor check
-PASS SEC-1 (e2e/login.spec.ts @ chromium)
-PASS SEC-2 (lockout_test.go @ unit)
-check OK: 2 rows (2 armed), FLOOR 2
-$ rulefloor rehash SEC-1   # again, unchanged
-rulefloor: refusing: no-op rehash for SEC-1 (hash unchanged: 817a26be968d)   # exit 1
+PASS CART-1 (e2e/cart.spec.ts @ chromium)
+PASS INV-1 (invoice_test.go @ unit)
+check OK: 2 rows (2 armed), FLOOR 2, RED-PROOFS 2 (measured 2)
+$ rulefloor rehash CART-1   # again, unchanged
+rulefloor: refusing: no-op rehash for CART-1 (hash unchanged: 172395533814)   # exit 1
 ```
 
 **A tagged test without a ledger row is an orphan — also a failure:**
 
 ```
 $ rulefloor check
-PASS SEC-1 (e2e/login.spec.ts @ chromium)
-PASS SEC-2 (lockout_test.go @ unit)
-DECLARED SEC-3 (no armed check)
-FAIL e2e/login.spec.ts: orphan tag SEC-9 (no ledger row)
+PASS CART-1 (e2e/cart.spec.ts @ chromium)
+PASS INV-1 (invoice_test.go @ unit)
+DECLARED CART-2 (no armed check)
+FAIL e2e/cart.spec.ts: orphan tag CART-9 (no ledger row)
 rulefloor: check FAILED: 1 problem(s) in .    # exit 1
 ```
 
@@ -190,9 +194,9 @@ audit trail of your rules.
 ### Declared vs armed
 
 A **declared** rule (`check` = `NONE`, `hash` = `-`) is a stated intention —
-it appears in `list`, `unarmed`, and check output (`DECLARED SEC-3 (no armed
-check)`), but nothing enforces it yet. An **armed** rule points at a tagged
-test and carries its body hash. `unarmed` is your work queue.
+it appears in `list`, `unarmed`, and check output (`DECLARED CART-2 (no
+armed check)`), but nothing enforces it yet. An **armed** rule points at a
+tagged test and carries its body hash. `unarmed` is your work queue.
 
 ### FLOOR
 
@@ -205,12 +209,12 @@ it** — not even the tool. Delete a row by hand and `check` fails with
 
 | Kind | File | Tag |
 |---|---|---|
-| Playwright | `*.spec.ts` | `[ID]` anywhere in the test title string: `test('... [SEC-1]', ...)` |
+| Playwright | `*.spec.ts` | `[ID]` anywhere in the test title string: `test('... [CART-1]', ...)` |
 | Go | `*_test.go` | the exact line `// RULE: ID` **directly above** `func TestXxx` |
 
 A tag must resolve to exactly one test — two tests carrying the same tag is a
-fatal error, never a guess. IDs match `[A-Z][A-Z0-9-]*[0-9]` (e.g. `SEC-1`,
-`LOGIN-PIN-1`): uppercase, ends in a digit, hyphens allowed.
+fatal error, never a guess. IDs match `[A-Z][A-Z0-9-]*[0-9]` (e.g. `CART-1`,
+`AUDIT-LOG-2`): uppercase, ends in a digit, hyphens allowed.
 
 ### The hash
 
@@ -224,20 +228,22 @@ confuse the span.
 
 `<file> @ <profile>`. The file is relative to the repo root and determines
 the kind by suffix (`.spec.ts` → playwright, `_test.go` → go-test). The
-profile names *where the test actually runs* — a Playwright project
-(`chromium`), or something like `e2e-run` when the proof only executes in
-a full e2e environment (see
-[honest limits](#guarantees-and-honest-limits)).
+profile names *where the test actually runs*.
 
-**For go-test rows the profile is semantic.** `unit` means the test is
-hermetic: plain `check` executes it and refuses `t.Skip` in its body. Any
-other profile (say `integration`) marks a test with an environmental
-precondition — a database, a live stack: plain `check` verifies it
-STATICALLY only (file, tag, hash), `t.Skip` guards are allowed, and the
-teeth live behind an explicit run:
+**The profile name is your repo's vocabulary, not the tool's.** Pick
+anything — a Playwright project name (`chromium`), a run mode of your own
+(`full-stack`, `nightly`). rulefloor attaches no meaning to the name
+beyond selecting an execution mode, with exactly one exception:
+
+**For go-test rows the profile `unit` is semantic.** `unit` means the test
+is hermetic: plain `check` executes it and refuses `t.Skip` in its body.
+Any OTHER profile name marks a test with an environmental precondition — a
+database, a live stack: plain `check` verifies it STATICALLY only (file,
+tag, hash), `t.Skip` guards are allowed, and the teeth live behind an
+explicit run:
 
 ```bash
-rulefloor check --run-profile integration --tags integration
+rulefloor check --run-profile needs-db --tags dbtest
 ```
 
 `--run-profile NAME` additionally executes every go-test row whose profile
@@ -262,7 +268,7 @@ Every command takes `--repo PATH` (default `.`).
 | `redproofs [--adopt]` | Ratchet status; `--adopt` writes `RED-PROOFS:` onto a legacy ledger at the **measured** count. |
 | `declare "sentence" --id ID` | Append a declared row; raise FLOOR. Optional `--red-proof TEXT`. |
 | `arm ID --check "file @ profile" --red-proof TEXT` | Pin the tagged test's hash; set enforced-by; raise FLOOR and RED-PROOFS. Refuses skipped tests. `--red-proof` is **required**. |
-| `prove ID --red-proof TEXT [--replace] [--force]` | Record a watched proof on an already-armed `-` row (the debt burndown path); raises RED-PROOFS. Refuses to replace an existing proof — except with `--replace`, which overwrites ONLY a cell the tool can see is a non-proof (a `blocked:…` pre-arming note or a dateless cell), never a genuine dated proof. `--force` overwrites ANY cell, including a genuine dated proof; it exists for a proof that is real but NOT row-specific (e.g. byte-identical text copied across two rules) where the fix is to re-watch each rule's own mutation. Loud and explicit; never raises RED-PROOFS (the row already counted). |
+| `prove ID --red-proof TEXT [--replace] [--force]` | Record a watched proof on an already-armed `-` row (the debt burndown path); raises RED-PROOFS. Refuses to replace an existing proof — except with `--replace`, which overwrites ONLY a cell the tool can see is a non-proof (a `blocked:…` pre-arming note or a dateless cell), never a genuine dated proof. `--force` overwrites ANY cell, including a genuine dated proof; it exists for a proof that is real but NOT row-specific (e.g. byte-identical text copied across two rows) where the fix is to re-watch each rule's own failure. Loud and explicit; never raises RED-PROOFS (the row already counted). |
 | `rehash ID` | Accept a reviewed body change. Refuses a no-op, refuses skipped tests. |
 | `check [--report pw.json] [--all "repo1,repo2"]` | Verify everything (below). |
 
@@ -302,7 +308,9 @@ watched failing, a commit, a run URL). Since the RED-PROOFS ratchet:
   a legacy ledger, at the same measured-count rule.)
 
 The proof TEXT itself is documentation: the tool ratchets the count, it
-cannot judge whether the words describe a genuinely watched failure.
+cannot judge whether the words describe a genuinely watched failure. What
+a proof must cite, and in what form, is your repo's convention (see
+[what belongs where](#what-belongs-here-what-belongs-in-your-repo)).
 
 ## `check`, in depth
 
@@ -337,31 +345,15 @@ given, comma-separated) and fails if any fails. Not combinable with
 ## Wiring into your entrypoints
 
 A ledger nobody checks is decoration. Put `check` inside the commands people
-already run.
+already run — and put it early: it is cheap (hashing plus a few single-test
+`go test` runs), so a tampered rule fails the aggregate before the
+expensive gates spend their minutes.
 
-**Makefile** (verbatim from a repo using it in production; builds the sibling
-checkout's binary on first use, and a missing sibling is a hard error — a
-gate that cannot measure must not look green):
+**Makefile:**
 
 ```make
-RULEFLOOR_DIR ?= ../rulefloor
-
-rulefloor-check:
-	@if [ ! -d "$(RULEFLOOR_DIR)" ]; then \
-		echo "rulefloor-check: CANNOT-EVALUATE — no rulefloor checkout at $(RULEFLOOR_DIR)" >&2; \
-		exit 2; \
-	fi
-	@if [ ! -x "$(RULEFLOOR_DIR)/rulefloor" ]; then \
-		echo "rulefloor-check: building $(RULEFLOOR_DIR)/rulefloor"; \
-		(cd "$(RULEFLOOR_DIR)" && go build -o rulefloor .) || { \
-			echo "rulefloor-check: CANNOT-EVALUATE — go build of the rulefloor tool failed" >&2; \
-			exit 2; \
-		}; \
-	fi
-	@"$(RULEFLOOR_DIR)/rulefloor" check --repo .
-
 verify:
-	@$(MAKE) --no-print-directory rulefloor-check
+	rulefloor check
 	# ... your other gates
 ```
 
@@ -369,13 +361,35 @@ verify:
 
 ```json
 "scripts": {
-  "rulefloor": "(test -x ../rulefloor/rulefloor || (cd ../rulefloor && go build -o rulefloor .)) && ../rulefloor/rulefloor check --repo ."
+  "rulefloor": "rulefloor check"
 }
 ```
 
-Run it early — it is cheap (hashing plus a few single-test `go test` runs),
-so a tampered rule fails the aggregate before the expensive gates spend their
-minutes.
+How the binary gets there — PATH, a checkout your gate builds on first
+use, a pinned release download — is your repo's decision, documented in
+your repo. Whatever you choose, make a missing or unbuildable binary a
+hard error (exit 2), never a silent pass: a gate that cannot measure must
+not look green.
+
+## What belongs here, what belongs in your repo
+
+rulefloor is a layer below the projects that use it, and this document
+stays on its own side of that line.
+
+**This README documents MECHANISM:** the ledger format, the commands and
+their refusals, the exit codes, the guarantees, and the honest limits.
+Nothing here names a consuming project, and no example is normative beyond
+the mechanism it demonstrates — the IDs, sentences, and profile names in
+the transcripts above are placeholders, not conventions.
+
+**Your repo documents its own POLICY:** the profile vocabulary it chose
+and what each profile means operationally; its red-proof text conventions
+(what a proof must cite, dating, escalation notes); its burndown method
+for historical `-` rows; and the entrypoint wiring that runs `check` (and
+any `--run-profile` runs) in its pipelines. Those choices belong in the
+consuming repo's docs, next to the people who made them — not here, where
+every consumer would inherit one project's conventions as if they were
+the tool's.
 
 ## Exit codes
 
@@ -387,16 +401,16 @@ minutes.
 
 ## Troubleshooting
 
-**`tag [SEC-1] not found in any test title`** — the tag isn't in the file you
+**`tag [CART-1] not found in any test title`** — the tag isn't in the file you
 armed, or it's in a `test.describe` title (tags go on `test`/`it` titles),
 or the ID is spelled differently. For Go: the line must be exactly
-`// RULE: SEC-1` (that spacing), *directly* above the `func TestXxx` line —
+`// RULE: CART-1` (that spacing), *directly* above the `func TestXxx` line —
 no blank line between.
 
-**`CANNOT-EVALUATE: tag [SEC-1] appears in 2 test titles; it must be unique`**
+**`CANNOT-EVALUATE: tag [CART-1] appears in 2 test titles; it must be unique`**
 — one rule, one test. Give the second test its own rule, or drop its tag.
 
-**`refusing: rule SEC-1 is already armed (use rehash to accept a changed
+**`refusing: rule CART-1 is already armed (use rehash to accept a changed
 body)`** — you wanted `rehash`. `arm` is a one-time act; accepting body
 changes is deliberately a separate verb.
 
@@ -432,13 +446,14 @@ build-tag or platform constraint on the file. Arm a test that runs where
 - A **conditional** skip (`test.skip(env.CI, ...)` inside the body, or a
   guarded `t.Skip()` that the arm-time scan didn't match) is part of the
   hashed body but not statically decidable. For such specs, name the profile
-  after the run that actually executes them (e.g. `e2e-run`) and enforce via
-  `--report` from that run — do not claim static protection.
+  after the run that actually executes them (a run mode of your own naming,
+  `full-stack` say) and enforce via `--report` from that run — do not claim
+  static protection.
 - A **describe-level or block-level conditional gate** — Playwright
   `test.skip(cond, ...)` at `test.describe` scope — sits entirely OUTSIDE
   the hashed test span: `arm` accepts the test and `check` cannot see the
   gate at all, not even as changed bytes. Rows gated this way are enforced
-  only by their profile run (e.g. `e2e-run`), never by the static check.
+  only by their profile run, never by the static check.
 - The hash pins the **test's own span**. Helpers it calls live outside the
   span; gut a helper and the hash won't notice — the test *run* (Go rows,
   `--report` rows) is the second line of defense.
