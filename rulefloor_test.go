@@ -54,6 +54,7 @@ func TestListShowUnarmed(t *testing.T) {
 	}
 }
 
+// RULE: WRITE-GUARDS-1
 func TestRefusals(t *testing.T) {
 	repo := newPWRepo(t)
 	cases := []struct {
@@ -86,6 +87,7 @@ func TestRefusals(t *testing.T) {
 	}
 }
 
+// RULE: SKIP-ARM-1
 func TestArmRefusesSkippedOrUntaggedTest(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "e2e/a.spec.ts", strings.Replace(pwFixture, "test('refresh", "test.skip('refresh", 1))
@@ -100,6 +102,7 @@ func TestArmRefusesSkippedOrUntaggedTest(t *testing.T) {
 	}
 }
 
+// RULE: HASH-REHASH-1
 func TestRehashUnarmedRefusedAndLegitFlow(t *testing.T) {
 	repo := newPWRepo(t)
 	mustRun(t, "declare", "Second rule.", "--id", "R-2", "--repo", repo)
@@ -227,6 +230,7 @@ func TestLedgerRoundTrip(t *testing.T) {
 	}
 }
 
+// RULE: PARSE-FATAL-1
 func TestParseLedgerRejects(t *testing.T) {
 	header := "| ID | one-sentence rule | enforced-by | check | red-proof | hash |\n|---|---|---|---|---|---|\n"
 	cases := []struct {
@@ -346,6 +350,7 @@ func TestIntegrationTeeth(t *testing.T) {
 }
 `
 
+// RULE: PROFILE-SEMANTIC-1
 func TestGoProfileStaticAndRunProfile(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, repo, "go.mod", "module fixture\n\ngo 1.21\n")
@@ -415,6 +420,7 @@ func TestVersionOutputShape(t *testing.T) {
 
 // ---- THE-RED-PROOF-FLOOR ----
 
+// RULE: RATCHET-ADOPT-1
 func TestRedProofsStatusAdoptAndUnproved(t *testing.T) {
 	repo := newLegacyRepo(t) // R-1 proved, R-2 armed-unproved, NO header
 
@@ -541,6 +547,7 @@ func TestParseLedgerRejectsBadRedProofsLine(t *testing.T) {
 	}
 }
 
+// RULE: PROVE-GUARD-1
 func TestProveFlowAndRefusals(t *testing.T) {
 	repo := newLegacyRepo(t) // R-1 proved, R-2 armed-unproved, header stripped
 	mustRun(t, "redproofs", "--adopt", "--repo", repo)
@@ -589,6 +596,7 @@ func TestProveFlowAndRefusals(t *testing.T) {
 	}
 }
 
+// RULE: REPLACE-NARROW-1
 func TestProveReplaceOnlyOverwritesNonProofs(t *testing.T) {
 	repo := newLegacyRepo(t)
 	mustRun(t, "redproofs", "--adopt", "--repo", repo)
@@ -628,6 +636,7 @@ func TestProveReplaceOnlyOverwritesNonProofs(t *testing.T) {
 	mustRun(t, "check", "--repo", repo)
 }
 
+// RULE: FORCE-LOUD-1
 func TestProveForceOverwritesGenuineProof(t *testing.T) {
 	repo := newLegacyRepo(t)
 	mustRun(t, "redproofs", "--adopt", "--repo", repo)

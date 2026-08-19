@@ -147,6 +147,7 @@ func deleteLedgerRow(t *testing.T, repo, id string) {
 
 // TestFixtureTable is the required table of tamper/refusal fixtures. Each case
 // starts from a fresh repo with one armed rule (R-1) and must fail or refuse.
+// RULE: TAMPER-TABLE-1
 func TestFixtureTable(t *testing.T) {
 	cases := []struct {
 		name     string
