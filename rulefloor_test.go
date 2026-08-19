@@ -609,7 +609,7 @@ func TestProveReplaceOnlyOverwritesNonProofs(t *testing.T) {
 
 	// Now shape a "blocked:" pre-arming cell on R-1 by hand (the ledger is
 	// tool-written, but this fixture simulates a legacy blocked: note that
-	// arm-time recorded — the exact RG1/RG2 case).
+	// arm-time recorded on a check that could not yet run).
 	replaceInFile(t, ledgerFP(repo), "| R-1 | Refresh token is single use. | playwright | e2e/login.spec.ts @ chromium | "+fixtureProof+" |",
 		"| R-1 | Refresh token is single use. | playwright | e2e/login.spec.ts @ chromium | blocked: TestX is go:build integration + live Postgres |")
 	// The blocked: note is a non-proof: --replace overwrites it.
@@ -662,7 +662,7 @@ func TestLooksLikeRealProof(t *testing.T) {
 	nonProof := []string{
 		"-",
 		"",
-		"blocked: TestRg1 is go:build integration + live Postgres",
+		"blocked: TestExample needs a live database",
 		"a note with no date",
 		"mutation red-proved: no date here",
 	}
