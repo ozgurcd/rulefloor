@@ -1,13 +1,13 @@
 # rulefloor
 
-**A machine-checked rule ledger for your repository.**
+**A repository-local invariant integrity tool.**
 
 You have rules you never want to lose: *"an emptied cart totals zero"*,
-*"invoice numbers are never reused"*. Each one is enforced by a
-test — until someone edits the test, adds a `.skip`, or deletes it, and the
-rule silently stops existing. rulefloor makes that decay loud: every rule is
-pinned to the exact body of the test that proves it, and `check` fails the
-moment that body changes, skips, or disappears.
+*"invoice numbers are never reused"*. Each one is bound to a concrete check —
+until someone edits the check, adds a `.skip`, or deletes it, and the binding
+silently stops protecting the rule. rulefloor makes that decay loud: every
+armed rule is pinned to the exact source span of its tagged test, and `check`
+fails when that binding changes, skips, or disappears.
 
 One file at your repo root — `RULE-FLOOR.md` — human-readable, diff-friendly,
 and written **only** by this tool. Stdlib-only Go, no dependencies.
@@ -23,9 +23,12 @@ check OK: 2 rows (2 armed), FLOOR 2, RED-PROOFS 2 (measured 2)
 
 - [How it works](#how-it-works)
 - [Install](#install)
+- [Go 1.27 standard-library review](#go-127-standard-library-review)
 - [Five-minute tutorial](#five-minute-tutorial)
 - [Concepts](#concepts)
 - [Command reference](#command-reference)
+- [Binary capabilities](#binary-capabilities)
+- [Machine-readable validation](#machine-readable-validation)
 - [`check`, in depth](#check-in-depth)
 - [Wiring into your entrypoints](#wiring-into-your-entrypoints)
 - [What belongs here, what belongs in your repo](#what-belongs-here-what-belongs-in-your-repo)
@@ -42,8 +45,8 @@ Three verbs, one loop:
 
 1. **`declare`** a rule — one sentence, one ID. It sits in the ledger as
    *declared* (visible debt, not yet enforced).
-2. **`arm`** it — point the rule at a tagged test and record where you
-   watched that test actually fail (`--red-proof`, required). rulefloor
+2. **`arm`** it — point the rule at a tagged test and record an observation
+   that the test failed (`--red-proof`, required). rulefloor
    extracts the test's body, stores the first 12 hex chars of its sha256,
    and raises the FLOOR (the minimum row count) so the row can never
    quietly vanish.
@@ -72,9 +75,9 @@ Or with Go:
 go install github.com/ozgurcd/rulefloor@latest
 ```
 
-Or build from source. **Requires Go 1.26.6 or newer** — the module's
-`go` directive is `1.26.6`, a pinned floor. A toolchain below it that
-cannot fetch 1.26.6 via `GOTOOLCHAIN=auto` will fail to build the tool,
+Or build from source. **Requires Go 1.27.0 or newer** — the module's
+`go` directive is `1.27.0`, the official baseline. A toolchain below it that
+cannot fetch Go 1.27 through `GOTOOLCHAIN=auto` will fail to build the tool,
 deliberately: an under-floor build environment should fail loudly, not
 produce a subtly different binary.
 
@@ -84,6 +87,25 @@ cd rulefloor && go build -o rulefloor .
 ```
 
 Put the binary on your PATH, or call it by path.
+
+## Go 1.27 standard-library review
+
+Rulefloor uses Go 1.27's `encoding/json/v2` writer for machine documents with
+deterministic encoding explicitly enabled, while retaining the existing v1
+wire bytes through conformance fixtures. Public command discovery uses
+`maps.Keys` with `slices.Sorted`, and capability snapshots clone and sort their
+inputs before publication.
+
+Candidate changes intentionally not adopted:
+
+- Existing JSON readers remain on `encoding/json` because changing accepted
+  ledger-adjacent or Playwright report input semantics is outside this
+  compatibility pass.
+- `os.Root` would require a broader file-access and subprocess-path redesign;
+  the existing tested canonical-root and symlink-confinement boundary remains.
+- Generic methods, embedded-field selectors, `bytes.CutLast`, `uuid`, SIMD,
+  ML-DSA, and `go/scanner.Scanner.End` do not simplify Rulefloor's current
+  responsibilities enough to justify a rewrite.
 
 ## Five-minute tutorial
 
@@ -110,8 +132,8 @@ func TestInvoiceNumbersAreNeverReused(t *testing.T) {
 }
 ```
 
-**Create the ledger, declare, arm.** `arm` requires `--red-proof` — a note
-of where you watched this test actually fail (see
+**Create the ledger, declare, arm.** `arm` requires `--red-proof` — a record
+of a failure observation (see
 [the red-proof obligation](#the-red-proof-obligation)):
 
 ```
@@ -204,10 +226,12 @@ tagged test and carries its body hash. `unarmed` is your work queue.
 
 ### FLOOR
 
-`FLOOR` is the minimum number of rows the ledger may ever have. Both
-`declare` and `arm` raise it to the current row count; **nothing ever lowers
-it** — not even the tool. Delete a row by hand and `check` fails with
-`rows is below FLOOR`. This is what makes the ledger append-only in practice.
+`FLOOR` is the minimum effective ledger count. Normally that is the row count;
+`declare` raises it and **nothing ever lowers it** — not even the tool. Delete a
+row by hand and `check` fails with `rows is below FLOOR`. A
+`REPAIRED-FIXTURES` audit entry counts only historical non-rule rows removed by
+the narrow `repair-fixture-row` migration; it preserves the ratchet rather than
+lowering it.
 
 ### Tagging tests
 
@@ -219,6 +243,11 @@ it** — not even the tool. Delete a row by hand and `check` fails with
 A tag must resolve to exactly one test — two tests carrying the same tag is a
 fatal error, never a guess. IDs match `[A-Z][A-Z0-9-]*[0-9]` (e.g. `CART-1`,
 `AUDIT-LOG-2`): uppercase, ends in a digit, hyphens allowed.
+
+Go tags are read from Go's parsed comment syntax. Marker-looking text inside a
+raw or interpreted string, a block comment, or an ordinary comment example is
+not a rule tag. The marker must be a standalone line comment immediately above
+the intended top-level `TestXxx` function.
 
 ### The hash
 
@@ -234,23 +263,21 @@ confuse the span.
 the kind by suffix (`.spec.ts` → playwright, `_test.go` → go-test). The
 profile names *where the test actually runs*.
 
-**The profile name is your repo's vocabulary, not the tool's.** Pick
-anything — a Playwright project name (`chromium`), a run mode of your own
-(`full-stack`, `nightly`). rulefloor attaches no meaning to the name
-beyond selecting an execution mode, with exactly one exception:
+**The profile name is your repo's vocabulary, not the execution mechanism.**
+Pick anything — a Playwright project name (`chromium`), a run mode of your own
+(`full-stack`, `nightly`). Execution support is determined by test kind: this
+release can directly execute Go tests, but not Playwright or Vitest tests.
 
-**For go-test rows the profile `unit` is semantic.** `unit` means the test
-is hermetic: plain `check` executes it and refuses `t.Skip` in its body.
-Any OTHER profile name marks a test with an environmental precondition — a
-database, a live stack: plain `check` verifies it STATICALLY only (file,
-tag, hash), `t.Skip` guards are allowed, and the teeth live behind an
-explicit run:
+For backward compatibility with existing six-column ledgers, a Go row whose
+declared profile is exactly `unit` has legacy execute policy: plain `check`
+executes it and refuses `t.Skip` in its body. Other Go profile names retain
+their historical static policy in plain `check`; execute them explicitly:
 
 ```bash
 rulefloor check --run-profile needs-db --tags dbtest
 ```
 
-`--run-profile NAME` additionally executes every go-test row whose profile
+`--run-profile NAME` additionally executes every Go row whose declared profile
 is NAME with `go test -tags T -count=1 -run '^TestXxx$'`. There, a test
 that SKIPS at runtime is CANNOT-EVALUATE (exit 2) — its precondition was
 absent and a skip is not a proof; a failure is a failure (exit 1). Unit
@@ -271,10 +298,14 @@ Every command takes `--repo PATH` (default `.`).
 | `unproved` | Armed rows whose red-proof cell is still `-` — the historical proof debt. |
 | `redproofs [--adopt]` | Ratchet status; `--adopt` writes `RED-PROOFS:` onto a legacy ledger at the **measured** count. |
 | `declare "sentence" --id ID` | Append a declared row; raise FLOOR. Optional `--red-proof TEXT`. |
-| `arm ID --check "file @ profile" --red-proof TEXT` | Pin the tagged test's hash; set enforced-by; raise FLOOR and RED-PROOFS. Refuses skipped tests. `--red-proof` is **required**. |
-| `prove ID --red-proof TEXT [--replace] [--force]` | Record a watched proof on an already-armed `-` row (the debt burndown path); raises RED-PROOFS. Refuses to replace an existing proof — except with `--replace`, which overwrites ONLY a cell the tool can see is a non-proof (a `blocked:…` pre-arming note or a dateless cell), never a genuine dated proof. `--force` overwrites ANY cell, including a genuine dated proof; it exists for a proof that is real but NOT row-specific (e.g. byte-identical text copied across two rows) where the fix is to re-watch each rule's own failure. Loud and explicit; never raises RED-PROOFS (the row already counted). |
+| `arm ID --check "file @ profile" --red-proof TEXT` | Pin the tagged test's hash; set enforced-by; raise FLOOR and RED-PROOFS. Refuses skipped tests. `--red-proof` is **required**; optional `--proof-kind` and `--proof-ref` create a structured proof record. |
+| `prove ID --red-proof TEXT [--replace] [--force]` | Record a failure observation on an already-armed `-` row (the debt burndown path); raises RED-PROOFS. Optional `--proof-kind` and `--proof-ref` create a structured record. Ordinary `--replace` cannot overwrite a genuine existing record. `--force` is the explicit, loud override and reports the replaced record; it does not weaken RED-PROOFS. |
 | `rehash ID` | Accept a reviewed body change. Refuses a no-op, refuses skipped tests. |
+| `repair-fixture-row ID` | One-time migration for an unarmed row explicitly described as `Fixture marker, not a rule:`. Refuses if the ID is still a real extractor-discovered tag; removes the row and records its ID in `REPAIRED-FIXTURES` so FLOOR is preserved. |
 | `check [--report pw.json] [--all "repo1,repo2"]` | Verify everything (below). |
+| `validate ID --mode static\|execute --json` | Validate exactly one rule and emit `rulefloor.validation.v1` JSON. Optional `--profile NAME` is execute-only. |
+| `capabilities [--json]` | Describe features compiled into this binary without reading a repository or ledger. |
+| `version --json` | Emit `rulefloor.version.v1` JSON using the same release-stamped version as human output. |
 
 Refusals you will meet, all deliberate:
 
@@ -289,12 +320,12 @@ Refusals you will meet, all deliberate:
 
 ### The red-proof obligation
 
-A check nobody has ever watched FAIL proves nothing — it can be armed,
-green, and false (an assertion that matches every state passes vacuously).
-`--red-proof TEXT` records where the test was seen *red* (a mutation
-watched failing, a commit, a run URL). Since the RED-PROOFS ratchet:
+A green check can still be vacuous. `--red-proof TEXT` records an observation
+that the bound test failed (for example after a mutation, or in a cited CI
+run). This is evidence recorded by a human or workflow, not semantic proof
+verified by Rulefloor. Since the RED-PROOFS ratchet:
 
-- **`arm` requires it.** Every newly armed row carries a real proof text —
+- **`arm` requires it.** Every newly armed row carries non-empty proof text —
   arming with none, or with the `-` placeholder, is refused.
 - **`RED-PROOFS: N`** is a second header line the tool maintains: the
   count of armed rows whose red-proof cell is not `-`. Like FLOOR it is
@@ -306,21 +337,124 @@ watched failing, a commit, a run URL). Since the RED-PROOFS ratchet:
   writes the header at the count measured *right then*; pre-existing `-`
   rows stay `-` — backfilling a proof text without re-watching the failure
   is exactly the lie the ratchet exists against. `unproved` lists that
-  debt; it shrinks only through `prove` (a genuinely watched failure,
-  recorded dated on the row) or new arms.
+  debt; it shrinks only through `prove` (a newly recorded observation) or new
+  arms.
   (Any write operation — declare, arm, rehash — also adopts the header on
   a legacy ledger, at the same measured-count rule.)
 
-The proof TEXT itself is documentation: the tool ratchets the count, it
-cannot judge whether the words describe a genuinely watched failure. What
-a proof must cite, and in what form, is your repo's convention (see
-[what belongs where](#what-belongs-here-what-belongs-in-your-repo)).
+The proof text itself is documentation: the tool validates its representation,
+fingerprints it, and ratchets the count, but cannot establish that the reported
+failure happened. What a proof must cite is your repo's convention (see
+[what belongs where](#what-belongs-here-what-belongs-in-your-repo)). HTTP(S)
+references are stored and syntax-checked only; Rulefloor does not fetch or
+verify them.
+
+## Binary capabilities
+
+`rulefloor capabilities` is binary feature discovery, not repository status or
+validation. It works outside a Rulefloor project, does not accept `--repo`, and
+never reads `RULE-FLOOR.md`, repository files, profiles, rule counts, ledger
+health, or installed Go toolchain state.
+
+Human output concisely lists the running version, machine schemas, supported
+test kinds and execution support, validation modes, proof kinds, ledger
+features, commands, and execution semantics. `rulefloor capabilities --json`
+emits exactly one `rulefloor.capabilities.v1` document containing the same data.
+Its `rulefloor_version` comes from the same runtime version source as
+`rulefloor version --json`.
+
+The v1 object contains `schema_version`, `rulefloor_version`,
+`machine_interfaces`, per-kind `test_kinds` entries with
+`static_validation`/`execution` booleans, `validation_modes`, `proof_kinds`,
+`ledger_features`, `commands`, and structured `execution_semantics`. Arrays use
+the deterministic order shown by the exact conformance fixture in
+[`testdata/machine`](testdata/machine).
+
+Execution capability is binary support by test kind: Go tests support static
+and executed validation; Playwright and Vitest support static validation only.
+Static mode never executes, and execute mode never falls back to static.
+Repository status remains the responsibility of `check` and `validate`.
+
+## Machine-readable validation
+
+`rulefloor version --json` writes one JSON document to stdout:
+
+```json
+{"schema_version":"rulefloor.version.v1","version":"v0.3.0"}
+```
+
+`rulefloor.version.v1`, `rulefloor.validation.v1`, and
+`rulefloor.capabilities.v1` are stable v1 contracts.
+Within v1, required fields, field meanings, outcome/reason meanings, and exit
+mapping will not be removed or renamed. Compatible releases may add optional
+fields. Consumers must reject an unknown `schema_version` rather than guessing.
+The version value is the normal release-time `main.version` stamp (`dev` in an
+unstamped development build); Rulefloor does not invent a release version.
+Exact v1 conformance documents are kept in [`testdata/machine`](testdata/machine).
+
+`rulefloor validate RULE-ID --repo PATH --mode static|execute [--profile NAME] --json`
+evaluates exactly one ledger row and writes one `rulefloor.validation.v1`
+document to stdout. It does not fail because another well-formed row has a
+hash, skip, execution, or proof problem. A malformed ledger remains
+`cannot_evaluate`, because the requested row cannot be trusted if its
+container cannot be parsed.
+
+The result records the Rulefloor version and timestamp; canonical repository
+root; ledger path and full SHA-256; requested rule, mode, and profile; whether
+the rule exists and is armed; check kind, file, and declared profile; expected
+and actual 12-character test-body hashes; red-proof presence and, when present,
+the full SHA-256 of its exact canonical ledger cell; static and execution
+status; a stable reason code; and bounded structured diagnostics. Output is one
+strict JSON document, diagnostic text is bounded, and no human prose is mixed
+into JSON stdout.
+
+- `static` performs only selected-row integrity checks: existence, armed state,
+  check shape and kind, confined regular check file, unique tag, skip/only
+  restrictions, body hash, and red-proof presence. It never executes the test.
+- `execute` performs static validation first, then runs a selected Go test with
+  explicit `go test` arguments. For legacy compatibility, a `unit` Go row needs
+  no `--profile`; another profile requires an exact declared-profile match.
+  Execution support is based on test kind, not the profile string. Rulefloor
+  does not accept test commands, shell fragments, arbitrary flags, or profile
+  substitution. Because this interface has no arbitrary build-tag input, a
+  build-tagged test that is
+  not in the default Go build context is `cannot_evaluate`.
+- Playwright and Vitest rows can pass `static`; direct `execute` is
+  `cannot_evaluate` because Rulefloor has no native runner for them. There is no
+  silent execute-to-static downgrade.
+
+Machine outcomes and process exits are exact: `pass` → 0, evaluated `fail` → 1,
+and `cannot_evaluate` → 2.
+
+Stable `evaluation.reason` codes are:
+
+| Reason | Outcome | Meaning |
+|---|---|---|
+| `rule_passed` | `pass` | Requested static or executed validation passed. |
+| `rule_failed` | `fail` | The selected bound test ran and failed. |
+| `hash_mismatch`, `test_restricted`, `red_proof_missing` | `fail` | The selected binding was evaluated and failed static integrity. |
+| `test_skipped` | `fail` or `cannot_evaluate` | A statically prohibited skip is a binding failure; a runtime skip means requested execution could not be evaluated. |
+| `invalid_request`, `ledger_invalid`, `rule_not_found`, `rule_unarmed`, `profile_mismatch` | `cannot_evaluate` | The request or selected ledger state could not be evaluated. |
+| `check_file_missing`, `tag_missing`, `tag_ambiguous`, `cannot_parse_test` | `cannot_evaluate` | Source discovery or extraction could not produce one trustworthy binding. |
+| `execution_unsupported`, `toolchain_unavailable`, `execution_failed`, `context_canceled`, `deadline_exceeded` | `cannot_evaluate` | Requested execution could not be completed reliably. |
+
+Diagnostics use the same reason when applicable; `ledger_unavailable` is the
+specific diagnostic code for an unavailable ledger while the result reason is
+`ledger_invalid`. Missing rules, runtime skips, and setup or compile errors are
+therefore `cannot_evaluate`, never an evaluated failure.
+
+The guarantee is deliberately narrow. Static validation confirms the integrity
+of the selected rule binding and its extracted source fingerprint. Executed
+validation first establishes that static integrity and then runs the supported
+bound test. Neither mode proves the natural-language rule, unrelated code, or
+the repository globally correct. A proof fingerprint identifies recorded proof
+metadata; it does not establish that the record is truthful.
 
 ## `check`, in depth
 
-For the ledger itself: strict parse (any malformed or missing field is
-fatal), row count ≥ FLOOR, and — once the header is adopted — the measured
-count of red-proved armed rows ≥ RED-PROOFS.
+For the ledger itself: strict parse (any malformed or missing field is fatal),
+rows plus explicit repaired-fixture audit entries ≥ FLOOR, and — once the
+header is adopted — the measured count of red-proved armed rows ≥ RED-PROOFS.
 
 For every **armed** row:
 
@@ -329,18 +463,20 @@ For every **armed** row:
 3. No `.skip`/`.only` modifier (Playwright), no `t.Skip`/`t.Skipf`/
    `t.SkipNow` in the body (Go).
 4. The recomputed body hash equals the ledger hash.
-5. **Go rows only:** `go test -count=1 -run '^TestXxx$'` runs in the file's
-   package and must report `--- PASS`. Your rule's proof executes on every
-   check.
+5. **Legacy `unit` Go rows, plus a selected non-unit `--run-profile`:**
+   `go test -count=1 -run '^TestXxx$'` runs in the file's package and must
+   report `--- PASS`. The bound test executes; the prose rule is not itself an
+   executable object.
 6. **Playwright rows, with `--report pw.json`:** the ID must appear in the
    Playwright JSON report with every result `passed`. Use this in the job
    that runs your e2e suite: `playwright test --reporter=json > pw.json`,
    then `rulefloor check --report pw.json`.
 
-**Orphan scan:** every `[ID]`-shaped tag in `e2e/**/*.spec.ts` titles and
-every `// RULE:` line in `**/*_test.go` (skipping `.git`, `node_modules`,
-`vendor`, `testdata`) must have a ledger row. A tag without a row means a
-proof nobody is tracking — that's a failure, not a warning.
+**Orphan scan:** every `[ID]`-shaped tag in `e2e/**/*.spec.ts` titles and every
+extractor-discovered Go rule comment in `**/*_test.go` (skipping `.git`,
+`node_modules`, `vendor`, `testdata`) must have a ledger row. Go discovery uses
+the standard parser, so fixture strings are not comments. A tag without a row
+means a binding nobody is tracking — that's a failure, not a warning.
 
 **`--all "path1,path2"`** checks several repos in one invocation (paths as
 given, comma-separated) and fails if any fails. Not combinable with
@@ -387,8 +523,8 @@ the mechanism it demonstrates — the IDs, sentences, and profile names in
 the transcripts above are placeholders, not conventions.
 
 **Your repo documents its own POLICY:** the profile vocabulary it chose
-and what each profile means operationally; its red-proof text conventions
-(what a proof must cite, dating, escalation notes); its burndown method
+and what each profile means operationally; its red-proof conventions
+(what an observation must cite, dating, escalation notes); its burndown method
 for historical `-` rows; and the entrypoint wiring that runs `check` (and
 any `--run-profile` runs) in its pipelines. Those choices belong in the
 consuming repo's docs, next to the people who made them — not here, where
@@ -436,16 +572,33 @@ build-tag or platform constraint on the file. Arm a test that runs where
 
 ## Guarantees and honest limits
 
+Rulefloor checks current repository files. It is not a formal verifier, a
+business-truth oracle, or a claim that every dependency of a test is unchanged.
+
 **Guarantees:**
 
-- rulefloor is the ledger's only writer, and every write keeps the format
+- Rulefloor is the ledger's intended writer, and every tool write keeps the format
   parseable by its own strict parser.
 - FLOOR never decreases. Rows never silently disappear.
+- Historical fixture-only row repair is explicit and retained in the ledger;
+  it cannot be used for armed or ordinary declared rules.
 - RED-PROOFS never decreases once adopted; arming demands a red-proof.
 - No command or flag lowers `check`'s strictness.
 - CANNOT-EVALUATE is always fatal (exit 2), never a skip.
 
-**Honest limits — what the static check cannot see:**
+**Honest limits — what Rulefloor cannot establish:**
+
+- Static validation confirms the selected binding, tag, restrictions, proof
+  presence, and source fingerprint. Executed validation additionally runs the
+  supported bound test. Neither semantically proves the natural-language rule.
+- A red-proof record means a failure observation was recorded. Rulefloor cannot
+  verify the truthfulness, provenance, or external reference behind that record.
+- Rulefloor checks the current ledger and working tree. Git history, signed
+  commits, protected branches, and repository review are the trust boundary for
+  who changed a ledger, whether `rehash` was justified, and whether proof
+  replacement was appropriately reviewed.
+- `rehash` deliberately accepts the current tagged test span after review; it
+  does not decide whether that edit preserves the rule's meaning.
 
 - A **conditional** skip (`test.skip(env.CI, ...)` inside the body, or a
   guarded `t.Skip()` that the arm-time scan didn't match) is part of the
@@ -458,16 +611,17 @@ build-tag or platform constraint on the file. Arm a test that runs where
   the hashed test span: `arm` accepts the test and `check` cannot see the
   gate at all, not even as changed bytes. Rows gated this way are enforced
   only by their profile run, never by the static check.
-- The hash pins the **test's own span**. Helpers it calls live outside the
-  span; gut a helper and the hash won't notice — the test *run* (Go rows,
-  `--report` rows) is the second line of defense.
+- The hash pins the **test's own span**. Helpers, generated inputs, environment,
+  toolchains, and dependencies live outside that span. Their changes may alter
+  semantics without changing the fingerprint; an executed test can detect some
+  resulting behavior changes, but Rulefloor does not fingerprint that closure.
 - Playwright rows without `--report` are pinned but not executed by `check`.
 - Vitest rows (`*.test.ts`, kind `vitest`) are pinned (tag + hash + no
   `.skip`/`.only`) but never executed by `check`, and their title tags are
   not orphan-scanned — the vitest suite itself runs in the repo's own CI
   gate.
 - Go rows on a non-`unit` profile are pinned but not executed by plain
-  `check` — enforcement of their runtime truth is the explicit
+  `check` — their runtime evaluation is the explicit
   `--run-profile` invocation, which someone must actually run (wire it into
   the pipeline that provisions the environment).
 - The RED-PROOFS ratchet counts proofs; it does not name them. A single
@@ -476,16 +630,18 @@ build-tag or platform constraint on the file. Arm a test that runs where
   contract, and this is the same trust boundary FLOOR has. A hand-LOWERED
   header is likewise invisible (measured ≥ header passes), exactly as a
   hand-lowered FLOOR is.
-- The proof text is unverified prose: the ratchet guarantees a proof was
-  *recorded*, not that the recorded failure was genuinely watched.
+- The proof text and optional reference are recorded metadata. Their fingerprint
+  detects representation drift; it is not evidence that the observation is true.
 
 ## Ledger format specification
 
-Frozen. The parser rejects anything else, fatally.
+The six-column table is the stable canonical format. The parser rejects
+malformed or extra columns fatally.
 
 ```
 FLOOR: <non-negative integer>
 RED-PROOFS: <non-negative integer>       (optional on legacy ledgers)
+REPAIRED-FIXTURES: <ID>[,<ID>...]        (optional migration audit)
 <blank line>
 | ID | one-sentence rule | enforced-by | check | red-proof | hash |
 |---|---|---|---|---|---|
@@ -495,10 +651,23 @@ RED-PROOFS: <non-negative integer>       (optional on legacy ledgers)
 - Six columns, every cell non-empty (`-` is the explicit placeholder).
 - `RED-PROOFS`: at most once, directly after `FLOOR`; absent only on
   ledgers that predate the ratchet (`redproofs --adopt` migrates).
+- `REPAIRED-FIXTURES`: migration-only audit metadata, at most once between the
+  ratchet headers and table. IDs are unique, cannot also be rows, and each
+  counts toward FLOOR. Existing entries are permanent so migrated ledgers keep
+  their ratchet history. New entries can be added only by the narrow
+  `repair-fixture-row` compatibility command; ordinary workflows never grow it.
 - `ID`: `[A-Z][A-Z0-9-]{0,30}[0-9]`, unique per ledger.
 - `enforced-by`: `playwright` | `go-test` | `vitest` for armed rows; `-`
   for declared.
 - `check`: `<repo-relative file> @ <profile>`, or `NONE` (declared).
+- `red-proof`: `-`, legacy free text, or a canonical
+  `[proof-v1 kind=KIND ref=URL] TEXT` record (`ref` is optional). Proof-v1 kinds
+  are `manual_observation`, `mutation_observation`, and `ci_reference`;
+  legacy free text reads as `legacy_manual`. Structured records retain the text,
+  optional parseable recorded time from that text, and optional HTTP(S)
+  reference. Missing time or provenance remains unknown; it is never invented.
+  References cannot contain whitespace, credentials, fragments, or non-HTTP(S)
+  schemes, and are stored without being fetched or verified.
 - `hash`: exactly 12 lowercase hex chars for armed rows; `-` for declared
   rows (enforced both ways).
 - Cells cannot contain `|` or newlines (input validation refuses them).

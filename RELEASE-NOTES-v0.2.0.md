@@ -4,8 +4,8 @@
 
 ### Breaking
 
-- **`arm` now requires `--red-proof`.** Arming a check nobody has watched
-  fail is refused, as is the `-` placeholder.
+- **`arm` now requires `--red-proof`.** Arming without a recorded failure
+  observation is refused, as is the `-` placeholder.
   - Old (v0.1.0): `rulefloor arm ID --check "file @ profile" [--red-proof TEXT]`
   - New: `rulefloor arm ID --check "file @ profile" --red-proof TEXT`
 - **Ledgers gain a `RED-PROOFS: N` header and populated red-proof cells.**
@@ -23,11 +23,11 @@
 - `redproofs [--adopt]` — ratchet status; `--adopt` writes the
   `RED-PROOFS:` header onto a legacy ledger at the measured count,
   never inventing history for pre-existing `-` rows.
-- `prove ID --red-proof TEXT [--replace] [--force]` — record a watched
-  proof on an already-armed `-` row. `--replace` overwrites only a cell
+- `prove ID --red-proof TEXT [--replace] [--force]` — record a failure
+  observation on an already-armed `-` row. `--replace` overwrites only a cell
   the tool can see is a non-proof (a `blocked:…` note or a dateless
-  cell); `--force` loudly overwrites any cell, for a proof that is real
-  but not row-specific, and never raises the ratchet.
+  cell); `--force` loudly overwrites any cell, for a prior observation that is
+  not row-specific, and never raises the ratchet.
 - The RED-PROOFS ratchet in `check`: monotonic like FLOOR; `check` fails
   when the measured count of proved rows sits below the header.
 - Vitest kind: `*.test.ts` rows (`enforced-by: vitest`) are pinned —

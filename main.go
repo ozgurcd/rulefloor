@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 )
 
@@ -18,7 +20,7 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-const usageText = `rulefloor — machine-checked rule ledger (RULE-FLOOR.md)
+const usageText = `rulefloor — repository-local invariant integrity (RULE-FLOOR.md)
 
 Usage:
   rulefloor init                              [--repo PATH]
@@ -28,15 +30,22 @@ Usage:
   rulefloor unproved                          [--repo PATH]
   rulefloor redproofs                         [--adopt] [--repo PATH]
   rulefloor declare "sentence" --id ID        [--red-proof TEXT] [--repo PATH]
-  rulefloor arm ID --check "file @ profile"   --red-proof TEXT [--repo PATH]
-  rulefloor prove ID --red-proof TEXT         [--replace] [--force] [--repo PATH]
+  rulefloor arm ID --check "file @ profile"   --red-proof TEXT [--proof-kind KIND] [--proof-ref URL] [--repo PATH]
+  rulefloor prove ID --red-proof TEXT         [--proof-kind KIND] [--proof-ref URL] [--replace] [--force] [--repo PATH]
   rulefloor rehash ID                         [--repo PATH]
+  rulefloor repair-fixture-row ID             [--repo PATH]
   rulefloor check                             [--repo PATH] [--report pw.json] [--all "repo1,repo2"]
                                               [--run-profile NAME [--tags T]]
-  rulefloor version                           (also: rulefloor --version)
+  rulefloor validate ID --repo PATH --mode static|execute [--profile NAME] --json
+  rulefloor capabilities [--json]
+  rulefloor version [--json]                  (also: rulefloor --version)
 
 Exit codes: 0 ok, 1 check failure or refusal, 2 fatal
 (malformed ledger, missing field, CANNOT-EVALUATE, usage error).
+
+Workflow: declare records a rule; arm binds it and records a red observation;
+check verifies all bindings; validate emits one rule as versioned JSON;
+rehash accepts reviewed source drift; prove records red-proof debt.
 `
 
 // exitErr carries the process exit code alongside the message.
@@ -50,6 +59,12 @@ func (e exitErr) Error() string { return e.msg }
 func failf(format string, a ...any) error  { return exitErr{1, fmt.Sprintf(format, a...)} }
 func fatalf(format string, a ...any) error { return exitErr{2, fmt.Sprintf(format, a...)} }
 
+// silentExit carries a machine-command exit code after its JSON result has
+// already been written. run must not add human diagnostics to stderr.
+type silentExit struct{ code int }
+
+func (e silentExit) Error() string { return "" }
+
 // flagTakesValue lists every flag; false marks booleans.
 var flagTakesValue = map[string]bool{
 	"--repo":        true,
@@ -60,23 +75,80 @@ var flagTakesValue = map[string]bool{
 	"--all":         true,
 	"--run-profile": true,
 	"--tags":        true,
+	"--mode":        true,
+	"--profile":     true,
+	"--proof-kind":  true,
+	"--proof-ref":   true,
+	"--json":        false,
 	"--adopt":       false,
 	"--replace":     false,
 	"--force":       false,
 }
 
-var allowedFlags = map[string]map[string]bool{
-	"init":      {"--repo": true},
-	"list":      {"--repo": true},
-	"show":      {"--repo": true},
-	"unarmed":   {"--repo": true},
-	"unproved":  {"--repo": true},
-	"redproofs": {"--repo": true, "--adopt": true},
-	"declare":   {"--repo": true, "--id": true, "--red-proof": true},
-	"arm":       {"--repo": true, "--check": true, "--red-proof": true},
-	"prove":     {"--repo": true, "--red-proof": true, "--replace": true, "--force": true},
-	"rehash":    {"--repo": true},
-	"check":     {"--repo": true, "--report": true, "--all": true, "--run-profile": true, "--tags": true},
+type commandInvocation struct {
+	repo   string
+	flags  map[string]string
+	pos    []string
+	stdout io.Writer
+}
+
+type commandSpec struct {
+	positionals int
+	flags       map[string]bool
+	run         func(commandInvocation) error
+}
+
+var commandSpecs = map[string]commandSpec{
+	"init": {0, map[string]bool{"--repo": true}, func(c commandInvocation) error {
+		return cmdInit(c.repo, c.stdout)
+	}},
+	"list": {0, map[string]bool{"--repo": true}, func(c commandInvocation) error {
+		return cmdList(c.repo, c.stdout)
+	}},
+	"show": {1, map[string]bool{"--repo": true}, func(c commandInvocation) error {
+		return cmdShow(c.repo, c.pos[0], c.stdout)
+	}},
+	"unarmed": {0, map[string]bool{"--repo": true}, func(c commandInvocation) error {
+		return cmdUnarmed(c.repo, c.stdout)
+	}},
+	"unproved": {0, map[string]bool{"--repo": true}, func(c commandInvocation) error {
+		return cmdUnproved(c.repo, c.stdout)
+	}},
+	"redproofs": {0, map[string]bool{"--repo": true, "--adopt": true}, func(c commandInvocation) error {
+		return cmdRedProofs(c.repo, c.flags["--adopt"] == "true", c.stdout)
+	}},
+	"declare": {1, map[string]bool{"--repo": true, "--id": true, "--red-proof": true}, func(c commandInvocation) error {
+		return cmdDeclare(c.repo, c.pos[0], c.flags["--id"], c.flags["--red-proof"], c.stdout)
+	}},
+	"arm": {1, map[string]bool{"--repo": true, "--check": true, "--red-proof": true, "--proof-kind": true, "--proof-ref": true}, func(c commandInvocation) error {
+		return cmdArm(c.repo, c.pos[0], c.flags["--check"], proofInput{
+			Text: c.flags["--red-proof"], Kind: c.flags["--proof-kind"], Reference: c.flags["--proof-ref"],
+		}, c.stdout)
+	}},
+	"prove": {1, map[string]bool{"--repo": true, "--red-proof": true, "--proof-kind": true, "--proof-ref": true, "--replace": true, "--force": true}, func(c commandInvocation) error {
+		return cmdProve(c.repo, c.pos[0], proofInput{
+			Text: c.flags["--red-proof"], Kind: c.flags["--proof-kind"], Reference: c.flags["--proof-ref"],
+		}, c.flags["--replace"] == "true", c.flags["--force"] == "true", c.stdout)
+	}},
+	"rehash": {1, map[string]bool{"--repo": true}, func(c commandInvocation) error {
+		return cmdRehash(c.repo, c.pos[0], c.stdout)
+	}},
+	"repair-fixture-row": {1, map[string]bool{"--repo": true}, func(c commandInvocation) error {
+		return cmdRepairFixtureRow(c.repo, c.pos[0], c.stdout)
+	}},
+	"check": {0, map[string]bool{"--repo": true, "--report": true, "--all": true, "--run-profile": true, "--tags": true}, func(c commandInvocation) error {
+		if c.flags["--tags"] != "" && c.flags["--run-profile"] == "" {
+			return fatalf("check: --tags requires --run-profile")
+		}
+		return cmdCheck(c.repo, c.flags["--report"], c.flags["--all"], c.flags["--run-profile"], c.flags["--tags"], c.stdout)
+	}},
+}
+
+func publicCommandNames() []string {
+	names := slices.Sorted(maps.Keys(commandSpecs))
+	names = append(names, "capabilities", "help", "validate", "version")
+	slices.Sort(names)
+	return names
 }
 
 // parseArgs splits args into flag values and positionals. Flags may appear
@@ -118,6 +190,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if err == nil {
 		return 0
 	}
+	var silent silentExit
+	if errors.As(err, &silent) {
+		return silent.code
+	}
 	code := 2
 	var ee exitErr
 	if errors.As(err, &ee) {
@@ -137,10 +213,25 @@ func dispatch(args []string, stdout io.Writer) error {
 		return nil
 	}
 	if cmd == "version" || cmd == "--version" {
+		if len(args) == 2 && args[1] == "--json" {
+			if err := writeJSON(stdout, VersionResult{SchemaVersion: versionSchemaVersion, Version: version}); err != nil {
+				return fatalf("write version JSON: %v", err)
+			}
+			return nil
+		}
+		if len(args) != 1 {
+			return fatalf("version: wrong arguments\n\n%s", usageText)
+		}
 		fmt.Fprintf(stdout, "rulefloor %s\n", version)
 		return nil
 	}
-	allowed, ok := allowedFlags[cmd]
+	if cmd == "capabilities" {
+		return dispatchCapabilities(args[1:], stdout)
+	}
+	if cmd == "validate" {
+		return dispatchValidate(args[1:], stdout)
+	}
+	spec, ok := commandSpecs[cmd]
 	if !ok {
 		return fatalf("unknown command %q\n\n%s", cmd, usageText)
 	}
@@ -149,7 +240,7 @@ func dispatch(args []string, stdout io.Writer) error {
 		return err
 	}
 	for name := range flags {
-		if !allowed[name] {
+		if !spec.flags[name] {
 			return fatalf("flag %s is not valid for %s", name, cmd)
 		}
 	}
@@ -157,71 +248,8 @@ func dispatch(args []string, stdout io.Writer) error {
 	if repo == "" {
 		repo = "."
 	}
-	want := func(n int) error {
-		if len(pos) != n {
-			return fatalf("%s: wrong arguments\n\n%s", cmd, usageText)
-		}
-		return nil
+	if len(pos) != spec.positionals {
+		return fatalf("%s: wrong arguments\n\n%s", cmd, usageText)
 	}
-	switch cmd {
-	case "init":
-		if err := want(0); err != nil {
-			return err
-		}
-		return cmdInit(repo, stdout)
-	case "list":
-		if err := want(0); err != nil {
-			return err
-		}
-		return cmdList(repo, stdout)
-	case "show":
-		if err := want(1); err != nil {
-			return err
-		}
-		return cmdShow(repo, pos[0], stdout)
-	case "unarmed":
-		if err := want(0); err != nil {
-			return err
-		}
-		return cmdUnarmed(repo, stdout)
-	case "unproved":
-		if err := want(0); err != nil {
-			return err
-		}
-		return cmdUnproved(repo, stdout)
-	case "redproofs":
-		if err := want(0); err != nil {
-			return err
-		}
-		return cmdRedProofs(repo, flags["--adopt"] == "true", stdout)
-	case "declare":
-		if err := want(1); err != nil {
-			return err
-		}
-		return cmdDeclare(repo, pos[0], flags["--id"], flags["--red-proof"], stdout)
-	case "arm":
-		if err := want(1); err != nil {
-			return err
-		}
-		return cmdArm(repo, pos[0], flags["--check"], flags["--red-proof"], stdout)
-	case "prove":
-		if err := want(1); err != nil {
-			return err
-		}
-		return cmdProve(repo, pos[0], flags["--red-proof"], flags["--replace"] == "true", flags["--force"] == "true", stdout)
-	case "rehash":
-		if err := want(1); err != nil {
-			return err
-		}
-		return cmdRehash(repo, pos[0], stdout)
-	case "check":
-		if err := want(0); err != nil {
-			return err
-		}
-		if flags["--tags"] != "" && flags["--run-profile"] == "" {
-			return fatalf("check: --tags requires --run-profile")
-		}
-		return cmdCheck(repo, flags["--report"], flags["--all"], flags["--run-profile"], flags["--tags"], stdout)
-	}
-	return fatalf("unknown command %q\n\n%s", cmd, usageText)
+	return spec.run(commandInvocation{repo: repo, flags: flags, pos: pos, stdout: stdout})
 }

@@ -218,8 +218,8 @@ func TestCheckAllRepos(t *testing.T) {
 
 func TestLedgerRoundTrip(t *testing.T) {
 	l := &Ledger{Floor: 2, Rows: []Row{
-		{"R-1", "Rule one.", "playwright", "e2e/a.spec.ts @ chromium", "-", "abcdef012345"},
-		{"R-2", "Rule two.", "-", "NONE", "-", "-"},
+		{ID: "R-1", Rule: "Rule one.", EnforcedBy: "playwright", Check: "e2e/a.spec.ts @ chromium", RedProof: "-", Hash: "abcdef012345"},
+		{ID: "R-2", Rule: "Rule two.", EnforcedBy: "-", Check: "NONE", RedProof: "-", Hash: "-"},
 	}}
 	got, err := parseLedger(l.serialize())
 	if err != nil {
@@ -515,7 +515,7 @@ func TestVitestKindEndToEnd(t *testing.T) {
 
 func TestLedgerRoundTripWithRedProofs(t *testing.T) {
 	l := &Ledger{Floor: 1, RedProofs: 1, HasRedProofs: true, Rows: []Row{
-		{"R-1", "Rule one.", "vitest", "src/a.test.ts @ vitest", "watched FAIL, restored", "abcdef012345"},
+		{ID: "R-1", Rule: "Rule one.", EnforcedBy: "vitest", Check: "src/a.test.ts @ vitest", RedProof: "watched FAIL, restored", Hash: "abcdef012345"},
 	}}
 	got, err := parseLedger(l.serialize())
 	if err != nil {
@@ -684,5 +684,30 @@ func TestLooksLikeRealProof(t *testing.T) {
 		if looksLikeRealProof(s) {
 			t.Errorf("looksLikeRealProof(%q) = true, want false", s)
 		}
+	}
+}
+
+func TestRepairFixtureRowPreservesFloorWithoutFakeRule(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "fixture_test.go", "package fixture\n\nconst source = `// RULE: FIXTURE-1`\n")
+	model := &Ledger{
+		Floor:        1,
+		HasRedProofs: true,
+		Rows: []Row{{
+			ID: "FIXTURE-1", Rule: "Fixture marker, not a rule: historical scanner workaround.",
+			EnforcedBy: "-", Check: "NONE", RedProof: "-", Hash: "-",
+		}},
+	}
+	if err := saveLedger(repo, model); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, "repair-fixture-row", "FIXTURE-1", "--repo", repo)
+	mustRun(t, "check", "--repo", repo)
+	repaired, err := loadLedger(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repaired.find("FIXTURE-1") != nil || !repaired.isRepairedFixture("FIXTURE-1") || repaired.Floor != 1 || repaired.effectiveCount() != 1 {
+		t.Fatalf("repaired ledger = %+v", repaired)
 	}
 }

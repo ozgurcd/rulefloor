@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"regexp"
 	"strings"
+
+	checkengine "github.com/ozgurcd/rulefloor/internal/check"
+	"github.com/ozgurcd/rulefloor/internal/ledger"
+	"github.com/ozgurcd/rulefloor/internal/repository"
 )
 
 func cmdInit(repo string, stdout io.Writer) error {
@@ -29,14 +31,14 @@ func cmdList(repo string, stdout io.Writer) error {
 	}
 	armed := 0
 	for _, r := range l.Rows {
-		if r.armed() {
+		if r.Armed() {
 			armed++
 		}
 	}
 	fmt.Fprintf(stdout, "FLOOR %d, %d rows (%d armed)\n", l.Floor, len(l.Rows), armed)
 	for _, r := range l.Rows {
 		state := "declared"
-		if r.armed() {
+		if r.Armed() {
 			state = "armed"
 		}
 		fmt.Fprintf(stdout, "%-10s %-9s %s\n", r.ID, state, r.Rule)
@@ -69,7 +71,7 @@ func cmdUnarmed(repo string, stdout io.Writer) error {
 	}
 	n := 0
 	for _, r := range l.Rows {
-		if !r.armed() {
+		if !r.Armed() {
 			fmt.Fprintf(stdout, "%-10s %s\n", r.ID, r.Rule)
 			n++
 		}
@@ -84,7 +86,7 @@ func cmdDeclare(repo, sentence, id, redProof string, stdout io.Writer) error {
 	if id == "" {
 		return fatalf("declare: --id is required")
 	}
-	if !idRe.MatchString(id) {
+	if !ledger.ValidID(id) {
 		return fatalf("declare: invalid ID %q (want uppercase letters/digits/hyphens ending in a digit, e.g. R-1)", id)
 	}
 	if err := validCell(sentence, "rule sentence"); err != nil {
@@ -95,6 +97,9 @@ func cmdDeclare(repo, sentence, id, redProof string, stdout io.Writer) error {
 	} else if err := validCell(redProof, "red-proof"); err != nil {
 		return err
 	}
+	if _, err := ledger.ParseProof(redProof); err != nil {
+		return fatalf("declare: invalid red-proof: %v", err)
+	}
 	l, err := loadLedger(repo)
 	if err != nil {
 		return err
@@ -102,8 +107,11 @@ func cmdDeclare(repo, sentence, id, redProof string, stdout io.Writer) error {
 	if l.find(id) != nil {
 		return failf("refusing: rule %s already exists", id)
 	}
+	if l.isRepairedFixture(id) {
+		return failf("refusing: rule %s is recorded as a repaired historical fixture", id)
+	}
 	l.Rows = append(l.Rows, Row{ID: id, Rule: sentence, EnforcedBy: "-", Check: "NONE", RedProof: redProof, Hash: "-"})
-	l.raiseFloor(len(l.Rows))
+	l.raiseFloor(l.effectiveCount())
 	l.maintainRedProofs()
 	if err := saveLedger(repo, l); err != nil {
 		return err
@@ -112,18 +120,28 @@ func cmdDeclare(repo, sentence, id, redProof string, stdout io.Writer) error {
 	return nil
 }
 
-func cmdArm(repo, id, checkSpec, redProof string, stdout io.Writer) error {
+type proofInput struct {
+	Text      string
+	Kind      string
+	Reference string
+}
+
+func cmdArm(repo, id, checkSpec string, proofInput proofInput, stdout io.Writer) error {
 	if checkSpec == "" {
 		return fatalf("arm: --check \"<file> @ <profile>\" is required")
 	}
 	// The red-proof is a first-class obligation: arming a check nobody
 	// has watched FAIL is the vacuity this ledger exists to prevent
 	// (SA-ORG-COPY-1 was armed, green, and false).
-	if redProof == "" {
+	if proofInput.Text == "" {
 		return fatalf("arm: --red-proof is required — describe the watched failure (arming an unproved check is refused)")
 	}
-	if redProof == "-" {
+	if proofInput.Text == "-" {
 		return fatalf("arm: --red-proof must be a real proof, not the \"-\" placeholder")
+	}
+	proofCell, err := buildProofCell("arm", proofInput)
+	if err != nil {
+		return err
 	}
 	file, profile, err := splitCheck(checkSpec)
 	if err != nil {
@@ -133,6 +151,10 @@ func cmdArm(repo, id, checkSpec, redProof string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	binding, err := ledger.InterpretBinding(&ledger.Row{EnforcedBy: kind, Check: file + " @ " + profile})
+	if err != nil {
+		return fatalf("arm: %v", err)
+	}
 	l, err := loadLedger(repo)
 	if err != nil {
 		return err
@@ -141,20 +163,17 @@ func cmdArm(repo, id, checkSpec, redProof string, stdout io.Writer) error {
 	if r == nil {
 		return failf("refusing: no rule %s (declare it first)", id)
 	}
-	if r.armed() {
+	if r.Armed() {
 		return failf("refusing: rule %s is already armed (use rehash to accept a changed body)", id)
 	}
 	ref, err := resolveRef(repo, file, id, kind)
 	if err != nil {
 		return err
 	}
-	if err := refuseSkips(ref, profile); err != nil {
+	if err := refuseSkips(ref, binding.Execution); err != nil {
 		return err
 	}
-	if err := validCell(redProof, "red-proof"); err != nil {
-		return err
-	}
-	r.RedProof = redProof
+	r.RedProof = proofCell
 	r.EnforcedBy = kind
 	r.Check = file + " @ " + profile
 	r.Hash = ref.hash()
@@ -176,13 +195,14 @@ func cmdRehash(repo, id string, stdout io.Writer) error {
 	if r == nil {
 		return failf("no rule %s", id)
 	}
-	if !r.armed() {
+	if !r.Armed() {
 		return failf("refusing: rule %s is not armed", id)
 	}
-	file, profile, err := splitCheck(r.Check)
+	binding, err := ledger.InterpretBinding((*ledger.Row)(r))
 	if err != nil {
 		return fatalf("row %s: %v", id, err)
 	}
+	file := binding.File
 	kind, err := kindForFile(file)
 	if err != nil {
 		return err
@@ -191,7 +211,7 @@ func cmdRehash(repo, id string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := refuseSkips(ref, profile); err != nil {
+	if err := refuseSkips(ref, binding.Execution); err != nil {
 		return err
 	}
 	h := ref.hash()
@@ -208,6 +228,51 @@ func cmdRehash(repo, id string, stdout io.Writer) error {
 	return nil
 }
 
+// cmdRepairFixtureRow is the narrow migration path for historical declared
+// rows created only to silence the former lexical Go orphan scanner. It
+// records the removed ID so the FLOOR ratchet's effective count never falls.
+func cmdRepairFixtureRow(repo, id string, stdout io.Writer) error {
+	model, err := loadLedger(repo)
+	if err != nil {
+		return err
+	}
+	row := model.find(id)
+	if row == nil {
+		if (*ledger.Ledger)(model).IsRepairedFixture(id) {
+			return failf("refusing: fixture row %s is already repaired", id)
+		}
+		return failf("refusing: no rule %s", id)
+	}
+	if row.Armed() {
+		return failf("refusing: rule %s is armed; only declared fixture-only rows can be repaired", id)
+	}
+	if !strings.HasPrefix(row.Rule, "Fixture marker, not a rule:") {
+		return failf("refusing: rule %s is not an explicitly recorded fixture-marker row", id)
+	}
+	discovered, err := checkengine.DiscoverRepository(extractorRegistry, repo)
+	if err != nil {
+		return fatalf("%v", err)
+	}
+	for _, located := range discovered {
+		if located.Tag.ID == id {
+			return failf("refusing: %s is still a real discovered tag in %s", id, located.Path)
+		}
+	}
+	for index := range model.Rows {
+		if model.Rows[index].ID == id {
+			model.Rows = append(model.Rows[:index], model.Rows[index+1:]...)
+			break
+		}
+	}
+	model.RepairedFixtures = append(model.RepairedFixtures, id)
+	model.maintainRedProofs()
+	if err := saveLedger(repo, model); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "repaired fixture-only row %s; FLOOR %d preserved by REPAIRED-FIXTURES audit record\n", id, model.Floor)
+	return nil
+}
+
 // cmdUnproved lists armed rows still carrying the "-" red-proof
 // placeholder — the historical debt the RED-PROOFS ratchet refuses to
 // let grow. Read-only.
@@ -218,7 +283,7 @@ func cmdUnproved(repo string, stdout io.Writer) error {
 	}
 	armed, n := 0, 0
 	for _, r := range l.Rows {
-		if !r.armed() {
+		if !r.Armed() {
 			continue
 		}
 		armed++
@@ -231,11 +296,6 @@ func cmdUnproved(repo string, stdout io.Writer) error {
 	return nil
 }
 
-// dateInProofRe matches an ISO date (YYYY-MM-DD) anywhere in a cell.
-// A genuine watched proof is dated; a placeholder or a pre-arming note
-// is not.
-var dateInProofRe = regexp.MustCompile(`\b\d{4}-\d{2}-\d{2}\b`)
-
 // looksLikeRealProof reports whether a red-proof cell is a genuine,
 // dated watched-failure record rather than a placeholder the tool
 // itself can see is a non-proof. A non-proof is: the "-" placeholder,
@@ -243,14 +303,8 @@ var dateInProofRe = regexp.MustCompile(`\b\d{4}-\d{2}-\d{2}\b`)
 // cell carrying no ISO date. `prove --replace` may overwrite ONLY a
 // non-proof; it refuses to clobber a real proof.
 func looksLikeRealProof(cell string) bool {
-	c := strings.TrimSpace(cell)
-	if c == "-" || c == "" {
-		return false
-	}
-	if strings.HasPrefix(c, "blocked:") {
-		return false
-	}
-	return dateInProofRe.MatchString(c)
+	proof, err := ledger.ParseProof(cell)
+	return err == nil && proof.GenuineRecord()
 }
 
 // cmdProve records a watched red-proof on an ALREADY-ARMED row — the
@@ -260,14 +314,15 @@ func looksLikeRealProof(cell string) bool {
 // tool can SEE is a non-proof (a "blocked:" pre-arming note or a
 // dateless cell) — never a genuine dated proof. Raises RED-PROOFS
 // through the same maintain path as arm.
-func cmdProve(repo, id, redProof string, replace, force bool, stdout io.Writer) error {
-	if redProof == "" {
+func cmdProve(repo, id string, proofInput proofInput, replace, force bool, stdout io.Writer) error {
+	if proofInput.Text == "" {
 		return fatalf("prove: --red-proof is required — describe the watched failure")
 	}
-	if redProof == "-" {
+	if proofInput.Text == "-" {
 		return fatalf("prove: --red-proof must be a real proof, not the \"-\" placeholder")
 	}
-	if err := validCell(redProof, "red-proof"); err != nil {
+	proofCell, err := buildProofCell("prove", proofInput)
+	if err != nil {
 		return err
 	}
 	l, err := loadLedger(repo)
@@ -278,8 +333,12 @@ func cmdProve(repo, id, redProof string, replace, force bool, stdout io.Writer) 
 	if r == nil {
 		return failf("no rule %s", id)
 	}
-	if !r.armed() {
+	if !r.Armed() {
 		return failf("refusing: rule %s is not armed (arm records its proof itself)", id)
+	}
+	existingProof, err := ledger.ParseProof(r.RedProof)
+	if err != nil {
+		return fatalf("row %s: invalid red-proof: %v", id, err)
 	}
 	switch {
 	case force:
@@ -292,17 +351,20 @@ func cmdProve(repo, id, redProof string, replace, force bool, stdout io.Writer) 
 		// is no longer a duplicate). Loud and explicit; never implicit.
 	case r.RedProof == "-":
 		// The ordinary burndown path: an unproved "-" cell.
-	case replace && !looksLikeRealProof(r.RedProof):
+	case replace && !existingProof.GenuineRecord():
 		// --replace narrowly overwrites a tool-visible non-proof (a
 		// "blocked:" pre-arming note or a dateless cell). Refuses a
 		// genuine dated proof below.
 	case replace:
+		if existingProof.Structured {
+			return failf("refusing: rule %s carries a protected structured red-proof record — --replace cannot overwrite an observation record; use --force after re-watching", id)
+		}
 		return failf("refusing: rule %s carries a genuine dated red-proof — --replace only overwrites a non-proof (\"-\", \"blocked:…\", or a dateless cell); use --force to overwrite a real-but-not-row-specific proof after re-watching", id)
 	default:
 		return failf("refusing: rule %s already carries a red-proof (recorded history is not replaced; use --replace for a pre-arming/dateless non-proof, or --force after re-watching a real-but-not-row-specific proof)", id)
 	}
 	old := r.RedProof
-	r.RedProof = redProof
+	r.RedProof = proofCell
 	l.maintainRedProofs()
 	if err := saveLedger(repo, l); err != nil {
 		return err
@@ -316,6 +378,30 @@ func cmdProve(repo, id, redProof string, replace, force bool, stdout io.Writer) 
 		fmt.Fprintf(stdout, "proved %s; RED-PROOFS %d\n", id, l.RedProofs)
 	}
 	return nil
+}
+
+func buildProofCell(command string, input proofInput) (string, error) {
+	if input.Kind == "" && input.Reference == "" {
+		if err := validCell(input.Text, "red-proof"); err != nil {
+			return "", err
+		}
+		if _, err := ledger.ParseProof(input.Text); err != nil {
+			return "", fatalf("%s: invalid red-proof: %v", command, err)
+		}
+		return input.Text, nil
+	}
+	if input.Kind == "" {
+		return "", fatalf("%s: --proof-ref requires --proof-kind", command)
+	}
+	proof, err := ledger.NewProof(input.Text, ledger.ProofKind(input.Kind), input.Reference)
+	if err != nil {
+		return "", fatalf("%s: %v", command, err)
+	}
+	cell := proof.CanonicalText()
+	if err := validCell(cell, "red-proof"); err != nil {
+		return "", err
+	}
+	return cell, nil
 }
 
 // cmdRedProofs prints the ratchet state; with --adopt it writes the
@@ -349,7 +435,15 @@ func cmdRedProofs(repo string, adopt bool, stdout io.Writer) error {
 
 // resolveRef reads the check file and extracts the tagged test.
 func resolveRef(repo, file, id, kind string) (*testRef, error) {
-	data, err := os.ReadFile(filepath.Join(repo, file))
+	root, err := repository.CanonicalRoot(repo)
+	if err != nil {
+		return nil, failf("cannot resolve repository: %v", err)
+	}
+	resolved, err := repository.ConfinedRegularFile(root, file)
+	if err != nil {
+		return nil, failf("cannot read check file %s: %v", file, err)
+	}
+	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return nil, failf("cannot read check file %s: %v", file, err)
 	}
@@ -360,11 +454,11 @@ func resolveRef(repo, file, id, kind string) (*testRef, error) {
 // exempt from the t.Skip refusal: such tests legitimately guard on their
 // environment, are STATIC-ONLY in plain check, and an actual runtime skip
 // under `check --run-profile` is CANNOT-EVALUATE there.
-func refuseSkips(ref *testRef, profile string) error {
+func refuseSkips(ref *testRef, policy ledger.ExecutionPolicy) error {
 	if ref.Modifier == "skip" || ref.Modifier == "only" {
 		return failf("refusing: tagged test uses .%s", ref.Modifier)
 	}
-	if ref.GoSkips && ref.Kind == kindGoTest && profile == "unit" {
+	if ref.GoSkips && string(ref.Kind) == kindGoTest && policy == ledger.ExecutionExecute {
 		return failf("refusing: tagged Go test calls t.Skip")
 	}
 	return nil

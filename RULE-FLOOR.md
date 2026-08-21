@@ -1,5 +1,6 @@
-FLOOR: 13
-RED-PROOFS: 10
+FLOOR: 16
+RED-PROOFS: 13
+REPAIRED-FIXTURES: G-1,G-2,IG-1
 
 | ID | one-sentence rule | enforced-by | check | red-proof | hash |
 |---|---|---|---|---|---|
@@ -13,6 +14,6 @@ RED-PROOFS: 10
 | REPLACE-NARROW-1 | prove --replace overwrites only a tool-visible non-proof, never a genuine dated proof. | go-test | rulefloor_test.go @ unit | 2026-08-19 mutated cmds.go looksLikeRealProof: date branch returns false so every proof classified non-proof; TestProveReplaceOnlyOverwritesNonProofs FAIL 'replace over a dated proof must refuse'; restored byte-identical, green | 20f107af5472 |
 | FORCE-LOUD-1 | prove --force overwrites loudly, naming the prior proof, and never raises RED-PROOFS. | go-test | rulefloor_test.go @ unit | 2026-08-19 mutated cmds.go: FORCED-overwrite message replaced with a quiet overwrote; TestProveForceOverwritesGenuineProof FAIL 'force must overwrite and name the prior proof'; restored byte-identical, green | c78f57698104 |
 | PROFILE-SEMANTIC-1 | A non-unit go profile is static in plain check and executes under --run-profile, where a runtime skip is CANNOT-EVALUATE. | go-test | rulefloor_test.go @ unit | 2026-08-19 mutated check.go: run-profile SKIP-is-fatal guard forced to if false so a runtime skip passed; TestGoProfileStaticAndRunProfile FAIL on its CANNOT-EVALUATE assertion; restored byte-identical, green | 1ddbb414f968 |
-| G-1 | Fixture marker, not a rule: G-1 tags go-fixture text inside a raw string in rulefloor_test.go; the line-based orphan scan cannot distinguish fixture from code (recorded tool limit). | - | NONE | - | - |
-| G-2 | Fixture marker, not a rule: G-2 tags the skip-fixture text inside a raw string in rulefloor_test.go; same recorded orphan-scan limit. | - | NONE | - | - |
-| IG-1 | Fixture marker, not a rule: IG-1 tags the integration-profile fixture text inside a raw string in rulefloor_test.go; same recorded orphan-scan limit. | - | NONE | - | - |
+| JSON-INTERFACE-1 | Machine JSON commands emit one versioned document with stable outcome and exit semantics. | go-test | validation_test.go @ unit | 2026-08-20 mutated main.go version JSON value to broken; TestVersionJSON failed on the version field; restored and green | 8a54fd38be06 |
+| SINGLE-RULE-1 | Single-rule validation ignores integrity failures in unrelated well-formed ledger rows. | go-test | validation_test.go @ unit | 2026-08-20 mutated validation.go to resolve a missing rule instead of the requested ID; TestValidateSelectedRuleIgnoresOtherBrokenRule failed; restored and green | 45ad2bcd95c6 |
+| VALIDATE-MODES-1 | Static validation never executes a bound test while execute mode reports its selected test outcome. | go-test | validation_test.go @ unit | 2026-08-20 mutated validation.go to bypass the static-mode return; TestValidateStaticPassJSON executed its fail marker and failed; restored and green | 61e66cc43d67 |
