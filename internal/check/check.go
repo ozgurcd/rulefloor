@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/ozgurcd/rulefloor/internal/extract"
 	"github.com/ozgurcd/rulefloor/internal/ledger"
@@ -204,6 +205,30 @@ func RunGoTest(ctx context.Context, runner CommandRunner, testFile, functionName
 		return Execution{Status: ExecutionCannotEvaluate, Performed: true, Reason: "execution_failed", Message: BoundedDiagnostic(text, "go test did not report the selected test as passed")}
 	}
 	return Execution{Status: ExecutionPass, Performed: true, Reason: "rule_passed"}
+}
+
+func ValidateBuildTags(tags string) error {
+	if tags == "" {
+		return nil
+	}
+	if len(tags) > 1024 {
+		return fmt.Errorf("--tags exceeds 1024 bytes")
+	}
+	values := strings.Split(tags, ",")
+	if len(values) > 64 {
+		return fmt.Errorf("--tags contains more than 64 build tags")
+	}
+	for _, value := range values {
+		if value == "" {
+			return fmt.Errorf("--tags contains an empty build tag")
+		}
+		for _, character := range value {
+			if !unicode.IsLetter(character) && !unicode.IsDigit(character) && character != '_' && character != '.' {
+				return fmt.Errorf("--tags contains invalid build tag %q", value)
+			}
+		}
+	}
+	return nil
 }
 
 func BoundedMessage(message string) string {

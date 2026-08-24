@@ -55,7 +55,10 @@ Three verbs, one loop:
    tag, deleted row, tag without a row.
 
 A legitimate, reviewed edit to an armed test is accepted with **`rehash`** —
-an explicit, auditable step, never an automatic one.
+an explicit, auditable step, never an automatic one. Before accepting drift,
+**`diff`** can recover the newest matching bound span from Git and compare it
+with the working span; it reports bytes and does not guess whether the change
+is cosmetic or semantic.
 
 ## Install
 
@@ -186,6 +189,13 @@ rulefloor: check FAILED: 2 problem(s) in .    # exit 1
 **A reviewed, legitimate edit is accepted explicitly:**
 
 ```
+$ rulefloor diff CART-1
+drift CART-1: e2e/cart.spec.ts (ledger fca893d6ef24, working 172395533814, baseline 72ee48d124b1)
+@@ -1,3 +1,3 @@
+ test('an emptied cart totals zero [CART-1]', async ({ page }) => {
+-  expect(total).toBe('0.00');
++  expect(total).toContain('0');
+ });
 $ rulefloor rehash CART-1
 rehashed CART-1: fca893d6ef24 -> 172395533814
 $ rulefloor check
@@ -301,9 +311,10 @@ Every command takes `--repo PATH` (default `.`).
 | `arm ID --check "file @ profile" --red-proof TEXT` | Pin the tagged test's hash; set enforced-by; raise FLOOR and RED-PROOFS. Refuses skipped tests. `--red-proof` is **required**; optional `--proof-kind` and `--proof-ref` create a structured proof record. |
 | `prove ID --red-proof TEXT [--replace] [--force]` | Record a failure observation on an already-armed `-` row (the debt burndown path); raises RED-PROOFS. Optional `--proof-kind` and `--proof-ref` create a structured record. Ordinary `--replace` cannot overwrite a genuine existing record. `--force` is the explicit, loud override and reports the replaced record; it does not weaken RED-PROOFS. |
 | `rehash ID` | Accept a reviewed body change. Refuses a no-op, refuses skipped tests. |
+| `diff ID` | Read-only comparison of the working bound span with the newest Git revision whose extracted fingerprint exactly matches the ledger. It never classifies drift as cosmetic or semantic. |
 | `repair-fixture-row ID` | One-time migration for an unarmed row explicitly described as `Fixture marker, not a rule:`. Refuses if the ID is still a real extractor-discovered tag; removes the row and records its ID in `REPAIRED-FIXTURES` so FLOOR is preserved. |
 | `check [--report pw.json] [--all "repo1,repo2"]` | Verify everything (below). |
-| `validate ID --mode static\|execute --json` | Validate exactly one rule and emit `rulefloor.validation.v1` JSON. Optional `--profile NAME` is execute-only. |
+| `validate ID --mode static\|execute --json` | Validate exactly one rule and emit `rulefloor.validation.v1` JSON. Optional execute-only `--profile NAME` selects the declared profile; optional `--tags TAGS` supplies validated Go build tags. |
 | `capabilities [--json]` | Describe features compiled into this binary without reading a repository or ledger. |
 | `version --json` | Emit `rulefloor.version.v1` JSON using the same release-stamped version as human output. |
 
@@ -347,7 +358,9 @@ fingerprints it, and ratchets the count, but cannot establish that the reported
 failure happened. What a proof must cite is your repo's convention (see
 [what belongs where](#what-belongs-here-what-belongs-in-your-repo)). HTTP(S)
 references are stored and syntax-checked only; Rulefloor does not fetch or
-verify them.
+verify them. Proof text is one ledger cell: it cannot contain a newline or `|`.
+`rulefloor help arm` and `rulefloor help prove` show these constraints before
+a write is attempted.
 
 ## Binary capabilities
 
@@ -380,7 +393,7 @@ Repository status remains the responsibility of `check` and `validate`.
 `rulefloor version --json` writes one JSON document to stdout:
 
 ```json
-{"schema_version":"rulefloor.version.v1","version":"v0.3.0"}
+{"schema_version":"rulefloor.version.v1","version":"v0.4.0"}
 ```
 
 `rulefloor.version.v1`, `rulefloor.validation.v1`, and
@@ -392,7 +405,7 @@ The version value is the normal release-time `main.version` stamp (`dev` in an
 unstamped development build); Rulefloor does not invent a release version.
 Exact v1 conformance documents are kept in [`testdata/machine`](testdata/machine).
 
-`rulefloor validate RULE-ID --repo PATH --mode static|execute [--profile NAME] --json`
+`rulefloor validate RULE-ID --repo PATH --mode static|execute [--profile NAME] [--tags TAGS] --json`
 evaluates exactly one ledger row and writes one `rulefloor.validation.v1`
 document to stdout. It does not fail because another well-formed row has a
 hash, skip, execution, or proof problem. A malformed ledger remains
@@ -400,7 +413,8 @@ hash, skip, execution, or proof problem. A malformed ledger remains
 container cannot be parsed.
 
 The result records the Rulefloor version and timestamp; canonical repository
-root; ledger path and full SHA-256; requested rule, mode, and profile; whether
+root; ledger path and full SHA-256; requested rule, mode, profile, and optional
+Go build tags; whether
 the rule exists and is armed; check kind, file, and declared profile; expected
 and actual 12-character test-body hashes; red-proof presence and, when present,
 the full SHA-256 of its exact canonical ledger cell; static and execution
@@ -416,9 +430,10 @@ into JSON stdout.
   no `--profile`; another profile requires an exact declared-profile match.
   Execution support is based on test kind, not the profile string. Rulefloor
   does not accept test commands, shell fragments, arbitrary flags, or profile
-  substitution. Because this interface has no arbitrary build-tag input, a
-  build-tagged test that is
-  not in the default Go build context is `cannot_evaluate`.
+  substitution. `--tags` is execute-only, accepts a bounded comma-separated
+  list of Go build-tag names, and is passed as one argument without a shell.
+  A build-tagged test omitted from the selected build context is
+  `cannot_evaluate`; Rulefloor never downgrades that request to static.
 - Playwright and Vitest rows can pass `static`; direct `execute` is
   `cannot_evaluate` because Rulefloor has no native runner for them. There is no
   silent execute-to-static downgrade.
@@ -531,6 +546,13 @@ consuming repo's docs, next to the people who made them — not here, where
 every consumer would inherit one project's conventions as if they were
 the tool's.
 
+Static call-graph reachability, exact-versus-possible edges, census symbols,
+multi-symbol coverage manifests, and an integration `~` convention belong to
+Gograph and the consuming repository's governance gate. Rulefloor deliberately
+does not store or infer those source-graph claims: its ledger remains one rule
+bound to one concrete check span. A repository may run Gograph alongside
+Rulefloor, but neither tool's result is silently treated as the other's proof.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -557,6 +579,12 @@ changes is deliberately a separate verb.
 **`refusing: no-op rehash`** — the body hasn't changed, so there is nothing
 to accept. If you expected a change, you edited a different test.
 
+**`CANNOT-EVALUATE: diff ... no matching bound span`** — `diff` could not find
+the ledger fingerprint in the newest 200 revisions that changed the bound
+file. The repository may be shallow, the baseline may be uncommitted or older,
+or Git may be unavailable. Review with normal repository history; do not
+rehash merely to silence this diagnostic.
+
 **`check file "../x" must be a relative path inside the repo`** — check files
 never escape the repo root; move the test or the ledger.
 
@@ -567,8 +595,9 @@ fine.
 
 **`go test ran but did not report "--- PASS: TestXxx"`** — the tagged func
 exists (the tag check passed) but the run didn't execute it; usually a
-build-tag or platform constraint on the file. Arm a test that runs where
-`check` runs.
+build-tag or platform constraint on the file. For selected machine validation,
+pass the repository's explicit `--tags`; for normal checks, use the matching
+`--run-profile NAME --tags TAGS` gate.
 
 ## Guarantees and honest limits
 
@@ -599,6 +628,10 @@ business-truth oracle, or a claim that every dependency of a test is unchanged.
   replacement was appropriately reviewed.
 - `rehash` deliberately accepts the current tagged test span after review; it
   does not decide whether that edit preserves the rule's meaning.
+- `diff` uses Git only to locate source bytes whose extracted fingerprint
+  exactly matches the ledger. It is bounded to the newest 200 revisions of the
+  check file, reads only the bound span, and does not establish authorship,
+  intent, or semantic equivalence.
 
 - A **conditional** skip (`test.skip(env.CI, ...)` inside the body, or a
   guarded `t.Skip()` that the arm-time scan didn't match) is part of the

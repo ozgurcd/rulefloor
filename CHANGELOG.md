@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-08-24
+
+### Added
+
+- `rulefloor diff ID` performs a read-only, bounded Git-history lookup and
+  compares the current bound span with the newest revision whose extractor
+  fingerprint exactly matches the ledger. It does not classify semantic or
+  cosmetic change.
+- Execute validation accepts optional, strictly validated `--tags TAGS` for a
+  single selected Go rule. The optional request field is additive to
+  `rulefloor.validation.v1`; documents without tags remain byte-compatible.
+- Command-specific `arm`, `prove`, `declare`, and `diff` help, including the
+  six-column ledger restriction on `|` and newlines in proof text.
+
+### Changed
+
+- `rulefloor.capabilities.v1` now advertises the public `diff` command while
+  retaining the same schema.
+- Documentation explicitly assigns exact/possible reachability, census
+  symbols, coverage manifests, and integration-reasoning conventions to
+  Gograph and repository governance rather than Rulefloor's ledger.
+
+### Security
+
+- Go build tags are length/count bounded and restricted to Go tag characters;
+  subprocesses continue to use argument vectors without shell execution.
+
 ## [0.3.0] - 2026-08-21
 
 ### Added

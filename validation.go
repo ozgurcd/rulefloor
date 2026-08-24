@@ -101,7 +101,7 @@ func dispatchValidate(args []string, stdout io.Writer) error {
 	if err != nil {
 		return writeValidationCommandResult(stdout, invalidValidationResult(request, err.Error()))
 	}
-	allowed := map[string]bool{"--repo": true, "--mode": true, "--profile": true, "--json": true}
+	allowed := map[string]bool{"--repo": true, "--mode": true, "--profile": true, "--tags": true, "--json": true}
 	for name := range flags {
 		if !allowed[name] {
 			return writeValidationCommandResult(stdout, invalidValidationResult(request, fmt.Sprintf("flag %s is not valid for validate", name)))
@@ -113,6 +113,7 @@ func dispatchValidate(args []string, stdout io.Writer) error {
 	}
 	request.Mode = ValidationMode(flags["--mode"])
 	request.Profile = flags["--profile"]
+	request.Tags = flags["--tags"]
 	if len(positionals) == 1 {
 		request.RuleID = positionals[0]
 	} else {

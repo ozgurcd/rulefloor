@@ -33,10 +33,11 @@ Usage:
   rulefloor arm ID --check "file @ profile"   --red-proof TEXT [--proof-kind KIND] [--proof-ref URL] [--repo PATH]
   rulefloor prove ID --red-proof TEXT         [--proof-kind KIND] [--proof-ref URL] [--replace] [--force] [--repo PATH]
   rulefloor rehash ID                         [--repo PATH]
+  rulefloor diff ID                           [--repo PATH]
   rulefloor repair-fixture-row ID             [--repo PATH]
   rulefloor check                             [--repo PATH] [--report pw.json] [--all "repo1,repo2"]
                                               [--run-profile NAME [--tags T]]
-  rulefloor validate ID --repo PATH --mode static|execute [--profile NAME] --json
+  rulefloor validate ID --repo PATH --mode static|execute [--profile NAME] [--tags T] --json
   rulefloor capabilities [--json]
   rulefloor version [--json]                  (also: rulefloor --version)
 
@@ -47,6 +48,40 @@ Workflow: declare records a rule; arm binds it and records a red observation;
 check verifies all bindings; validate emits one rule as versioned JSON;
 rehash accepts reviewed source drift; prove records red-proof debt.
 `
+
+var commandHelp = map[string]string{
+	"arm": `Usage: rulefloor arm ID --check "file @ profile" --red-proof TEXT [--proof-kind KIND] [--proof-ref URL] [--repo PATH]
+
+Bind a declared rule to its tagged check and record an observed red proof.
+Proof text must be non-empty, fit on one line, and cannot contain "|" because
+RULE-FLOOR.md uses a six-column Markdown table. Proof kinds are
+manual_observation, mutation_observation, and ci_reference. References are
+optional HTTP(S) URLs and are recorded but never fetched or verified.
+`,
+	"prove": `Usage: rulefloor prove ID --red-proof TEXT [--proof-kind KIND] [--proof-ref URL] [--replace] [--force] [--repo PATH]
+
+Record red-proof evidence for an existing rule. Proof text must be non-empty,
+fit on one line, and cannot contain "|". --replace refuses to overwrite a
+genuine proof; --force is the explicit, auditable override.
+`,
+	"declare": `Usage: rulefloor declare "sentence" --id ID [--red-proof TEXT] [--repo PATH]
+
+Declare one invariant. Optional proof text must fit on one line and cannot
+contain "|" because the ledger is a six-column Markdown table.
+`,
+	"diff": `Usage: rulefloor diff ID [--repo PATH]
+
+Show the current bound span against the newest Git revision whose extracted
+fingerprint matches the ledger. This read-only comparison does not classify a
+change as cosmetic or semantic.
+`,
+	"validate": `Usage: rulefloor validate ID --repo PATH --mode static|execute [--profile NAME] [--tags T] --json
+
+Validate one selected binding as a strict rulefloor.validation.v1 document.
+Static mode never executes and rejects --profile/--tags. Execute mode performs
+static validation first, never downgrades, and supports validated Go build tags.
+`,
+}
 
 // exitErr carries the process exit code alongside the message.
 type exitErr struct {
@@ -133,6 +168,9 @@ var commandSpecs = map[string]commandSpec{
 	"rehash": {1, map[string]bool{"--repo": true}, func(c commandInvocation) error {
 		return cmdRehash(c.repo, c.pos[0], c.stdout)
 	}},
+	"diff": {1, map[string]bool{"--repo": true}, func(c commandInvocation) error {
+		return cmdDiff(c.repo, c.pos[0], c.stdout)
+	}},
 	"repair-fixture-row": {1, map[string]bool{"--repo": true}, func(c commandInvocation) error {
 		return cmdRepairFixtureRow(c.repo, c.pos[0], c.stdout)
 	}},
@@ -208,32 +246,31 @@ func dispatch(args []string, stdout io.Writer) error {
 		return fatalf("missing command\n\n%s", usageText)
 	}
 	cmd := args[0]
-	if cmd == "help" || cmd == "--help" || cmd == "-h" {
+	if cmd == "help" {
+		return dispatchHelp(args[1:], stdout)
+	}
+	if cmd == "--help" || cmd == "-h" {
 		fmt.Fprint(stdout, usageText)
 		return nil
 	}
 	if cmd == "version" || cmd == "--version" {
-		if len(args) == 2 && args[1] == "--json" {
-			if err := writeJSON(stdout, VersionResult{SchemaVersion: versionSchemaVersion, Version: version}); err != nil {
-				return fatalf("write version JSON: %v", err)
-			}
-			return nil
-		}
-		if len(args) != 1 {
-			return fatalf("version: wrong arguments\n\n%s", usageText)
-		}
-		fmt.Fprintf(stdout, "rulefloor %s\n", version)
-		return nil
+		return dispatchVersion(args[1:], stdout)
 	}
 	if cmd == "capabilities" {
 		return dispatchCapabilities(args[1:], stdout)
 	}
 	if cmd == "validate" {
+		if len(args) == 2 && args[1] == "--help" {
+			return printCommandHelp(cmd, stdout)
+		}
 		return dispatchValidate(args[1:], stdout)
 	}
 	spec, ok := commandSpecs[cmd]
 	if !ok {
 		return fatalf("unknown command %q\n\n%s", cmd, usageText)
+	}
+	if len(args) == 2 && args[1] == "--help" {
+		return printCommandHelp(cmd, stdout)
 	}
 	flags, pos, err := parseArgs(args[1:])
 	if err != nil {
@@ -252,4 +289,39 @@ func dispatch(args []string, stdout io.Writer) error {
 		return fatalf("%s: wrong arguments\n\n%s", cmd, usageText)
 	}
 	return spec.run(commandInvocation{repo: repo, flags: flags, pos: pos, stdout: stdout})
+}
+
+func dispatchVersion(args []string, stdout io.Writer) error {
+	if len(args) == 1 && args[0] == "--json" {
+		if err := writeJSON(stdout, VersionResult{SchemaVersion: versionSchemaVersion, Version: version}); err != nil {
+			return fatalf("write version JSON: %v", err)
+		}
+		return nil
+	}
+	if len(args) != 0 {
+		return fatalf("version: wrong arguments\n\n%s", usageText)
+	}
+	fmt.Fprintf(stdout, "rulefloor %s\n", version)
+	return nil
+}
+
+func dispatchHelp(args []string, stdout io.Writer) error {
+	switch len(args) {
+	case 0:
+		fmt.Fprint(stdout, usageText)
+		return nil
+	case 1:
+		return printCommandHelp(args[0], stdout)
+	default:
+		return fatalf("help: wrong arguments\n\n%s", usageText)
+	}
+}
+
+func printCommandHelp(command string, stdout io.Writer) error {
+	help, ok := commandHelp[command]
+	if !ok {
+		return fatalf("no detailed help for command %q\n\n%s", command, usageText)
+	}
+	fmt.Fprint(stdout, help)
+	return nil
 }

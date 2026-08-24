@@ -59,6 +59,7 @@ type Request struct {
 	RuleID     string
 	Mode       Mode
 	Profile    string
+	Tags       string
 }
 
 type VersionResult struct {
@@ -87,6 +88,7 @@ type RequestView struct {
 	RuleID  string `json:"rule_id"`
 	Mode    string `json:"mode"`
 	Profile string `json:"profile"`
+	Tags    string `json:"tags,omitempty"`
 }
 
 type Fingerprint struct {
@@ -163,8 +165,8 @@ func (s Service) Validate(ctx context.Context, request Request) Result {
 		result.Evaluation.Execution.Requested = true
 		result.Evaluation.Execution.Status = StatusNotPerformed
 	}
-	if request.Mode == ModeStatic && request.Profile != "" {
-		return s.cannotEvaluate(result, "invalid_request", "--profile is not valid in static mode")
+	if err := validateRequestOptions(request); err != nil {
+		return s.cannotEvaluate(result, "invalid_request", err.Error())
 	}
 
 	root, err := repository.CanonicalRoot(request.Repository)
@@ -274,7 +276,7 @@ func (s Service) Validate(ctx context.Context, request Request) Result {
 	if !checkengine.SupportsExecution(static.Kind) {
 		return s.cannotEvaluateWith(result, "execution_unsupported", Diagnostic{Code: "execution_unsupported", Message: fmt.Sprintf("Rulefloor cannot directly execute %s checks", static.Kind), Path: file})
 	}
-	execution := checkengine.RunGoTest(ctx, s.runner, resolvedCheck, static.Ref.FuncName, "")
+	execution := checkengine.RunGoTest(ctx, s.runner, resolvedCheck, static.Ref.FuncName, request.Tags)
 	result.Evaluation.Execution.Performed = execution.Performed
 	result.Evaluation.Execution.Status = validationExecutionStatus(execution.Status)
 	if execution.Message != "" {
@@ -292,6 +294,16 @@ func (s Service) Validate(ctx context.Context, request Request) Result {
 		result.Evaluation.Reason = execution.Reason
 	}
 	return s.finish(result)
+}
+
+func validateRequestOptions(request Request) error {
+	if request.Mode == ModeStatic && request.Profile != "" {
+		return errors.New("--profile is not valid in static mode")
+	}
+	if request.Mode == ModeStatic && request.Tags != "" {
+		return errors.New("--tags is not valid in static mode")
+	}
+	return checkengine.ValidateBuildTags(request.Tags)
 }
 
 func validationExecutionStatus(status checkengine.ExecutionStatus) Status {
@@ -323,7 +335,7 @@ func (s Service) newResult(request Request) Result {
 		SchemaVersion:    SchemaVersion,
 		Command:          "validate",
 		RulefloorVersion: s.version,
-		Request:          RequestView{RuleID: request.RuleID, Mode: string(request.Mode), Profile: request.Profile},
+		Request:          RequestView{RuleID: request.RuleID, Mode: string(request.Mode), Profile: request.Profile, Tags: request.Tags},
 		Rule:             Rule{RedProofStatus: RedProofNotApplicable},
 		Evaluation: Evaluation{
 			StaticIntegrity: StatusNotPerformed,

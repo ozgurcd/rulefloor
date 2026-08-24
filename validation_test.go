@@ -46,6 +46,15 @@ import (
 }
 `
 
+const taggedValidationProfileFixture = `//go:build integration
+
+package sample
+
+import "testing"
+
+` + "// RULE: JSON-TAGGED-1\n" + `func TestTaggedProfileRule(t *testing.T) {}
+`
+
 const validationPWFixture = `import { test, expect } from "@playwright/test";
 
 test("[JSON-PW-1] invariant holds", async () => {
@@ -249,6 +258,30 @@ func TestValidateExecuteProfileSemantics(t *testing.T) {
 	code, result, _, _ = runValidationCommand(t, "validate", "JSON-PROFILE-1", "--repo", repo, "--mode", "execute", "--profile", "integration", "--json")
 	if code != 2 || result.Evaluation.Reason != "test_skipped" || result.Evaluation.Execution.Status != ValidationStatusCannotEvaluate {
 		t.Fatalf("skip result = %+v", result)
+	}
+}
+
+func TestValidateExecuteSupportsExplicitBuildTags(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "go.mod", "module example.com/rulefloor-tagged\n\ngo 1.27.0\n")
+	writeFile(t, repo, "tagged_test.go", taggedValidationProfileFixture)
+	mustRun(t, "init", "--repo", repo)
+	mustRun(t, "declare", "The tagged invariant holds.", "--id", "JSON-TAGGED-1", "--repo", repo)
+	mustRun(t, "arm", "JSON-TAGGED-1", "--check", "tagged_test.go @ integration", "--red-proof", fixtureProof, "--repo", repo)
+
+	code, result, _, stderr := runValidationCommand(t, "validate", "JSON-TAGGED-1", "--repo", repo, "--mode", "execute", "--profile", "integration", "--tags", "integration", "--json")
+	if code != 0 || stderr != "" || result.Evaluation.Outcome != ValidationPass || result.Request.Tags != "integration" {
+		t.Fatalf("tagged execute result: code=%d stderr=%q result=%+v", code, stderr, result)
+	}
+
+	for _, args := range [][]string{
+		{"validate", "JSON-TAGGED-1", "--repo", repo, "--mode", "static", "--tags", "integration", "--json"},
+		{"validate", "JSON-TAGGED-1", "--repo", repo, "--mode", "execute", "--profile", "integration", "--tags", "integration;echo", "--json"},
+	} {
+		code, result, _, stderr = runValidationCommand(t, args...)
+		if code != 2 || stderr != "" || result.Evaluation.Reason != "invalid_request" {
+			t.Fatalf("invalid tags %v: code=%d stderr=%q result=%+v", args, code, stderr, result)
+		}
 	}
 }
 

@@ -15,6 +15,9 @@ import (
 )
 
 func cmdCheck(repo, reportPath, allSpec, runProfile, tags string, stdout io.Writer) error {
+	if err := checkengine.ValidateBuildTags(tags); err != nil {
+		return fatalf("check: %v", err)
+	}
 	if allSpec == "" {
 		n, err := checkRepo(repo, reportPath, runProfile, tags, stdout)
 		if err != nil {
