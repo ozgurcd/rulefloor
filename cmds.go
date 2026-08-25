@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	checkengine "github.com/ozgurcd/rulefloor/internal/check"
@@ -83,7 +84,7 @@ func cmdUnarmed(repo string, stdout io.Writer) error {
 	return nil
 }
 
-func cmdDeclare(repo, sentence, id, redProof string, stdout io.Writer) error {
+func cmdDeclare(repo, sentence, id, redProof, coversSpec string, coversSet bool, stdout io.Writer) error {
 	if id == "" {
 		return fatalf("declare: --id is required")
 	}
@@ -101,6 +102,10 @@ func cmdDeclare(repo, sentence, id, redProof string, stdout io.Writer) error {
 	if _, err := ledger.ParseProof(redProof); err != nil {
 		return fatalf("declare: invalid red-proof: %v", err)
 	}
+	coveredSymbols, err := parseCoversFlag("declare", coversSpec, coversSet, false)
+	if err != nil {
+		return err
+	}
 	l, err := loadLedger(repo)
 	if err != nil {
 		return err
@@ -111,7 +116,10 @@ func cmdDeclare(repo, sentence, id, redProof string, stdout io.Writer) error {
 	if l.isRepairedFixture(id) {
 		return failf("refusing: rule %s is recorded as a repaired historical fixture", id)
 	}
-	l.Rows = append(l.Rows, Row{ID: id, Rule: sentence, EnforcedBy: "-", Check: "NONE", RedProof: redProof, Hash: "-"})
+	l.Rows = append(l.Rows, Row{
+		ID: id, Rule: sentence, EnforcedBy: "-", Check: "NONE", RedProof: redProof, Hash: "-",
+		CoveredSymbols: coveredSymbols,
+	})
 	l.raiseFloor(l.effectiveCount())
 	l.maintainRedProofs()
 	if err := saveLedger(repo, l); err != nil {
@@ -121,8 +129,12 @@ func cmdDeclare(repo, sentence, id, redProof string, stdout io.Writer) error {
 	return nil
 }
 
-func cmdAmend(repo, id, sentence string, stdout io.Writer) error {
+func cmdAmend(repo, id, sentence, coversSpec string, coversSet bool, stdout io.Writer) error {
 	if err := validCell(sentence, "rule sentence"); err != nil {
+		return err
+	}
+	coveredSymbols, err := parseCoversFlag("amend", coversSpec, coversSet, true)
+	if err != nil {
 		return err
 	}
 	l, err := loadLedger(repo)
@@ -133,16 +145,21 @@ func cmdAmend(repo, id, sentence string, stdout io.Writer) error {
 	if r == nil {
 		return failf("no rule %s", id)
 	}
-	if r.Rule == sentence {
-		return failf("refusing: no-op amendment for %s (sentence unchanged)", id)
+	sentenceChanged := r.Rule != sentence
+	coversChanged := coversSet && !slices.Equal(r.CoveredSymbols, coveredSymbols)
+	if !sentenceChanged && !coversChanged {
+		return failf("refusing: no-op amendment for %s (sentence and covered symbols unchanged)", id)
 	}
 	old := r.Rule
 	r.Rule = sentence
+	if coversSet {
+		r.CoveredSymbols = coveredSymbols
+	}
 	l.maintainRedProofs()
 	if err := saveLedger(repo, l); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "amended %s: %q -> %q; binding and ratchets preserved\n", id, old, sentence)
+	fmt.Fprintf(stdout, "amended %s: %q -> %q; %d covered symbols; binding and ratchets preserved\n", id, old, sentence, len(r.CoveredSymbols))
 	return nil
 }
 
@@ -177,7 +194,7 @@ type proofUpdate struct {
 	Change              proofChange
 }
 
-func cmdArm(repo, id, checkSpec string, proofInput proofInput, stdout io.Writer) error {
+func cmdArm(repo, id, checkSpec string, proofInput proofInput, coversSpec string, coversSet bool, stdout io.Writer) error {
 	if checkSpec == "" {
 		return fatalf("arm: --check \"<file> @ <profile>\" is required")
 	}
@@ -191,6 +208,10 @@ func cmdArm(repo, id, checkSpec string, proofInput proofInput, stdout io.Writer)
 		return fatalf("arm: --red-proof must be a real proof, not the \"-\" placeholder")
 	}
 	proofCell, err := buildProofCell("arm", proofInput)
+	if err != nil {
+		return err
+	}
+	coveredSymbols, err := parseCoversFlag("arm", coversSpec, coversSet, false)
 	if err != nil {
 		return err
 	}
@@ -225,6 +246,9 @@ func cmdArm(repo, id, checkSpec string, proofInput proofInput, stdout io.Writer)
 		return err
 	}
 	r.RedProof = proofCell
+	if coversSet {
+		r.CoveredSymbols = coveredSymbols
+	}
 	r.EnforcedBy = kind
 	r.Check = file + " @ " + profile
 	r.Hash = ref.hash()
@@ -565,6 +589,20 @@ func buildProofCell(command string, input proofInput) (string, error) {
 		return "", err
 	}
 	return cell, nil
+}
+
+func parseCoversFlag(command, value string, set, allowEmpty bool) ([]string, error) {
+	if !set {
+		return nil, nil
+	}
+	symbols, err := ledger.ParseCoveredSymbols(value)
+	if err != nil {
+		return nil, fatalf("%s: invalid --covers: %v", command, err)
+	}
+	if len(symbols) == 0 && !allowEmpty {
+		return nil, fatalf("%s: --covers requires at least one symbol", command)
+	}
+	return symbols, nil
 }
 
 // cmdRedProofs prints the ratchet state; with --adopt it writes the

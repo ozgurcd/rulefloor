@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Optional covered-symbol metadata on rules via `--covers` for `declare`,
+  `arm`, and `amend`, plus deterministic `rulefloor covers [--json]` discovery
+  using the new `rulefloor.covers.v1` machine schema.
+- Canonical covered-symbol validation and regression coverage proving rules
+  without metadata retain their existing proof, ratchet, and hash behavior.
+
+### Compatibility
+
+- RULE-FLOOR.md remains six columns. Covered symbols use an opaque structured
+  token in the existing proof cell so v0.3.0 can still parse and check populated
+  ledgers; a seventh column was rejected because it breaks the v0.3.0 parser.
+- Existing version, validation, and capabilities schemas remain compatible;
+  capabilities add the covers interface, command, and ledger feature.
+
 ## [0.5.0] - 2026-08-25
 
 ### Added

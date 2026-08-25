@@ -21,12 +21,13 @@ var (
 )
 
 type Row struct {
-	ID         string
-	Rule       string
-	EnforcedBy string
-	Check      string
-	RedProof   string
-	Hash       string
+	ID             string
+	Rule           string
+	EnforcedBy     string
+	Check          string
+	RedProof       string
+	Hash           string
+	CoveredSymbols []string
 }
 
 func (r *Row) Armed() bool { return r.Check != "NONE" }
@@ -140,7 +141,7 @@ func (l *Ledger) Serialize() string {
 	fmt.Fprintf(&b, "|%s\n", strings.Repeat("---|", len(headerCells)))
 	for _, r := range l.Rows {
 		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s |\n",
-			r.ID, r.Rule, r.EnforcedBy, r.Check, r.RedProof, r.Hash)
+			r.ID, r.Rule, r.EnforcedBy, r.Check, joinProofAndCoveredSymbols(r.RedProof, r.CoveredSymbols), r.Hash)
 	}
 	return b.String()
 }
@@ -232,7 +233,14 @@ func Parse(data string) (*Ledger, error) {
 					return nil, fmt.Errorf("line %d: missing field %q", ln, headerCells[j])
 				}
 			}
-			r := Row{cells[0], cells[1], cells[2], cells[3], cells[4], cells[5]}
+			proof, coveredSymbols, err := splitProofAndCoveredSymbols(cells[4])
+			if err != nil {
+				return nil, fmt.Errorf("line %d: invalid covered-symbol metadata: %v", ln, err)
+			}
+			r := Row{
+				ID: cells[0], Rule: cells[1], EnforcedBy: cells[2], Check: cells[3],
+				RedProof: proof, Hash: cells[5], CoveredSymbols: coveredSymbols,
+			}
 			if !ValidID(r.ID) {
 				return nil, fmt.Errorf("line %d: invalid rule ID %q", ln, r.ID)
 			}

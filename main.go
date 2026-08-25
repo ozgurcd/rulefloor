@@ -29,14 +29,16 @@ Usage:
   rulefloor unarmed                           [--repo PATH]
   rulefloor unproved                          [--repo PATH]
   rulefloor redproofs                         [--adopt] [--repo PATH]
-  rulefloor declare "sentence" --id ID        [--red-proof TEXT] [--repo PATH]
-  rulefloor amend ID "sentence"               [--repo PATH]
-  rulefloor arm ID --check "file @ profile"   --red-proof TEXT [--proof-kind KIND] [--proof-ref URL] [--repo PATH]
+  rulefloor declare "sentence" --id ID        [--red-proof TEXT] [--covers SYMBOLS] [--repo PATH]
+  rulefloor amend ID "sentence"               [--covers SYMBOLS] [--repo PATH]
+  rulefloor arm ID --check "file @ profile"   --red-proof TEXT [--proof-kind KIND] [--proof-ref URL]
+                                              [--covers SYMBOLS] [--repo PATH]
   rulefloor prove ID --red-proof TEXT         [--proof-kind KIND] [--proof-ref URL] [--replace|--supersede|--force]
                                               [--run [--profile NAME] [--tags T]] [--repo PATH]
   rulefloor rehash ID                         [--repo PATH]
   rulefloor diff ID                           [--repo PATH]
   rulefloor repair-fixture-row ID             [--repo PATH]
+  rulefloor covers                            [--json] [--repo PATH]
   rulefloor check                             [--repo PATH] [--report pw.json] [--all "repo1,repo2"]
                                               [--run-profile NAME [--tags T]] [--only ID]
   rulefloor validate ID --repo PATH --mode static|execute [--profile NAME] [--tags T] --json
@@ -47,18 +49,20 @@ Exit codes: 0 ok, 1 check failure or refusal, 2 fatal
 (malformed ledger, missing field, CANNOT-EVALUATE, usage error).
 
 Workflow: declare records a rule; arm binds it and records a red observation;
+amend updates rule prose or covered symbols; covers reads the rule-to-symbol map;
 check verifies all bindings; validate emits one rule as versioned JSON;
 rehash accepts reviewed source drift; prove records red-proof debt.
 `
 
 var commandHelp = map[string]string{
-	"arm": `Usage: rulefloor arm ID --check "file @ profile" --red-proof TEXT [--proof-kind KIND] [--proof-ref URL] [--repo PATH]
+	"arm": `Usage: rulefloor arm ID --check "file @ profile" --red-proof TEXT [--proof-kind KIND] [--proof-ref URL] [--covers SYMBOLS] [--repo PATH]
 
 Bind a declared rule to its tagged check and record an observed red proof.
 Proof text must be non-empty, fit on one line, and cannot contain "|" because
 RULE-FLOOR.md uses a six-column Markdown table. Proof kinds are
 manual_observation, mutation_observation, and ci_reference. References are
 optional HTTP(S) URLs and are recorded but never fetched or verified.
+--covers accepts a comma-separated set of protected product symbols.
 `,
 	"prove": `Usage: rulefloor prove ID --red-proof TEXT [--proof-kind KIND] [--proof-ref URL] [--replace|--supersede|--force] [--run [--profile NAME] [--tags T]] [--repo PATH]
 
@@ -69,16 +73,22 @@ links the new record to its full SHA-256 fingerprint. --force remains the loud
 emergency override. --run records nothing unless the selected Go test reports
 FAIL; non-unit profiles require an exact --profile and may use --tags.
 `,
-	"declare": `Usage: rulefloor declare "sentence" --id ID [--red-proof TEXT] [--repo PATH]
+	"declare": `Usage: rulefloor declare "sentence" --id ID [--red-proof TEXT] [--covers SYMBOLS] [--repo PATH]
 
 Declare one invariant. Optional proof text must fit on one line and cannot
-contain "|" because the ledger is a six-column Markdown table.
+contain "|" because the ledger is a six-column Markdown table. --covers stores
+an optional comma-separated symbol set without changing that table shape.
 `,
-	"amend": `Usage: rulefloor amend ID "sentence" [--repo PATH]
+	"amend": `Usage: rulefloor amend ID "sentence" [--covers SYMBOLS] [--repo PATH]
 
-Replace only an existing rule's sentence. The ID, binding, hash, proof, FLOOR,
-and RED-PROOFS are preserved. A no-op amendment is refused; rules cannot be
-deleted through this command.
+Replace an existing rule's sentence and, when --covers is present, its covered
+symbol set. Use --covers= to clear that set. The ID, binding, hash, proof,
+FLOOR, and RED-PROOFS are preserved. A no-op amendment is refused; rules cannot be deleted.
+`,
+	"covers": `Usage: rulefloor covers [--json] [--repo PATH]
+
+Read the optional rule-to-symbol map. JSON output is one deterministic
+rulefloor.covers.v1 document and includes every rule ID; unmapped rules have [].
 `,
 	"rehash": `Usage: rulefloor rehash ID [--repo PATH]
 
@@ -140,6 +150,7 @@ var flagTakesValue = map[string]bool{
 	"--profile":     true,
 	"--proof-kind":  true,
 	"--proof-ref":   true,
+	"--covers":      true,
 	"--json":        false,
 	"--adopt":       false,
 	"--replace":     false,
@@ -180,16 +191,19 @@ var commandSpecs = map[string]commandSpec{
 	"redproofs": {0, map[string]bool{"--repo": true, "--adopt": true}, func(c commandInvocation) error {
 		return cmdRedProofs(c.repo, c.flags["--adopt"] == "true", c.stdout)
 	}},
-	"declare": {1, map[string]bool{"--repo": true, "--id": true, "--red-proof": true}, func(c commandInvocation) error {
-		return cmdDeclare(c.repo, c.pos[0], c.flags["--id"], c.flags["--red-proof"], c.stdout)
+	"declare": {1, map[string]bool{"--repo": true, "--id": true, "--red-proof": true, "--covers": true}, func(c commandInvocation) error {
+		covers, coversSet := c.flags["--covers"]
+		return cmdDeclare(c.repo, c.pos[0], c.flags["--id"], c.flags["--red-proof"], covers, coversSet, c.stdout)
 	}},
-	"amend": {2, map[string]bool{"--repo": true}, func(c commandInvocation) error {
-		return cmdAmend(c.repo, c.pos[0], c.pos[1], c.stdout)
+	"amend": {2, map[string]bool{"--repo": true, "--covers": true}, func(c commandInvocation) error {
+		covers, coversSet := c.flags["--covers"]
+		return cmdAmend(c.repo, c.pos[0], c.pos[1], covers, coversSet, c.stdout)
 	}},
-	"arm": {1, map[string]bool{"--repo": true, "--check": true, "--red-proof": true, "--proof-kind": true, "--proof-ref": true}, func(c commandInvocation) error {
+	"arm": {1, map[string]bool{"--repo": true, "--check": true, "--red-proof": true, "--proof-kind": true, "--proof-ref": true, "--covers": true}, func(c commandInvocation) error {
+		covers, coversSet := c.flags["--covers"]
 		return cmdArm(c.repo, c.pos[0], c.flags["--check"], proofInput{
 			Text: c.flags["--red-proof"], Kind: c.flags["--proof-kind"], Reference: c.flags["--proof-ref"],
-		}, c.stdout)
+		}, covers, coversSet, c.stdout)
 	}},
 	"prove": {1, map[string]bool{"--repo": true, "--red-proof": true, "--proof-kind": true, "--proof-ref": true, "--replace": true, "--supersede": true, "--force": true, "--run": true, "--profile": true, "--tags": true}, func(c commandInvocation) error {
 		return cmdProve(c.repo, c.pos[0], proofInput{
@@ -207,6 +221,9 @@ var commandSpecs = map[string]commandSpec{
 	}},
 	"repair-fixture-row": {1, map[string]bool{"--repo": true}, func(c commandInvocation) error {
 		return cmdRepairFixtureRow(c.repo, c.pos[0], c.stdout)
+	}},
+	"covers": {0, map[string]bool{"--repo": true, "--json": true}, func(c commandInvocation) error {
+		return cmdCovers(c.repo, c.flags["--json"] == "true", c.stdout)
 	}},
 	"check": {0, map[string]bool{"--repo": true, "--report": true, "--all": true, "--run-profile": true, "--tags": true, "--only": true}, func(c commandInvocation) error {
 		if c.flags["--tags"] != "" && c.flags["--run-profile"] == "" {

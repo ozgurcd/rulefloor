@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -225,7 +226,7 @@ func TestLedgerRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Floor != 2 || len(got.Rows) != 2 || got.Rows[0] != l.Rows[0] || got.Rows[1] != l.Rows[1] {
+	if got.Floor != 2 || len(got.Rows) != 2 || !reflect.DeepEqual(got.Rows[0], l.Rows[0]) || !reflect.DeepEqual(got.Rows[1], l.Rows[1]) {
 		t.Fatalf("round trip mismatch: %+v", got)
 	}
 }
@@ -521,7 +522,7 @@ func TestLedgerRoundTripWithRedProofs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.HasRedProofs || got.RedProofs != 1 || got.Rows[0] != l.Rows[0] {
+	if !got.HasRedProofs || got.RedProofs != 1 || !reflect.DeepEqual(got.Rows[0], l.Rows[0]) {
 		t.Fatalf("round trip mismatch: %+v", got)
 	}
 }

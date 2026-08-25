@@ -27,6 +27,7 @@ check OK: 2 rows (2 armed), FLOOR 2, RED-PROOFS 2 (measured 2)
 - [Five-minute tutorial](#five-minute-tutorial)
 - [Concepts](#concepts)
 - [Command reference](#command-reference)
+- [Covered product symbols](#covered-product-symbols)
 - [Binary capabilities](#binary-capabilities)
 - [Machine-readable validation](#machine-readable-validation)
 - [`check`, in depth](#check-in-depth)
@@ -61,9 +62,10 @@ with the working span; it reports bytes and does not guess whether the change
 is cosmetic or semantic.
 
 The rule ID is permanent, but its human sentence can be clarified with
-**`amend`**. Amendment changes only that sentence; the binding, proof, hash,
-FLOOR, and RED-PROOFS remain unchanged. Legitimate rule deletion remains
-intentionally unavailable because it would violate the ledger ratchet.
+**`amend`**. Amendment changes that sentence and, only when explicitly passed,
+the optional covered-symbol set; the binding, proof, hash, FLOOR, and
+RED-PROOFS remain unchanged. Legitimate rule deletion remains intentionally
+unavailable because it would violate the ledger ratchet.
 
 ## Install
 
@@ -308,17 +310,18 @@ Every command takes `--repo PATH` (default `.`).
 |---|---|
 | `init` | Create an empty ledger. Refuses if one exists. |
 | `list` | All rules, with armed/declared state. |
-| `show ID` | Every field of one rule. |
+| `show ID` | The canonical six-column values of one rule; use `covers` for symbol metadata. |
 | `unarmed` | Rules that still need a test — the work queue. |
 | `unproved` | Armed rows whose red-proof cell is still `-` — the historical proof debt. |
 | `redproofs [--adopt]` | Ratchet status; `--adopt` writes `RED-PROOFS:` onto a legacy ledger at the **measured** count. |
-| `declare "sentence" --id ID` | Append a declared row; raise FLOOR. Optional `--red-proof TEXT`. |
-| `amend ID "sentence"` | Replace only an existing rule sentence. Preserve its ID, binding, proof, hash, FLOOR, and RED-PROOFS; refuse a no-op. |
-| `arm ID --check "file @ profile" --red-proof TEXT` | Pin the tagged test's hash; set enforced-by; raise FLOOR and RED-PROOFS. Refuses skipped tests. `--red-proof` is **required**; optional `--proof-kind` and `--proof-ref` create a structured proof record. |
+| `declare "sentence" --id ID [--covers SYMBOLS]` | Append a declared row; raise FLOOR. Optional `--red-proof TEXT`; optional comma-separated covered symbols. |
+| `amend ID "sentence" [--covers SYMBOLS]` | Replace an existing rule sentence and optionally its covered-symbol set. Preserve its ID, binding, proof, hash, FLOOR, and RED-PROOFS; use `--covers=` to clear and refuse a complete no-op. |
+| `arm ID --check "file @ profile" --red-proof TEXT [--covers SYMBOLS]` | Pin the tagged test's hash; set enforced-by; raise FLOOR and RED-PROOFS. Refuses skipped tests. `--red-proof` is **required**; optional `--proof-kind` and `--proof-ref` create a structured proof record. `--covers` sets or replaces the symbol set; omission retains a declaration-time set. |
 | `prove ID --red-proof TEXT [--replace\|--supersede\|--force] [--run]` | Record an observation on an armed row. `--replace` remains limited to a non-proof. `--supersede` replaces a genuine re-watched proof and stores its full fingerprint link. `--force` is the loud exceptional override. `--run` executes one Go binding and writes only after that selected test reports FAIL. |
 | `rehash ID` | Accept a reviewed body change. Refuses a no-op, refuses skipped tests. |
 | `diff ID` | Read-only comparison of the working bound span with the newest Git revision whose extracted fingerprint exactly matches the ledger. It never classifies drift as cosmetic or semantic. |
 | `repair-fixture-row ID` | One-time migration for an unarmed row explicitly described as `Fixture marker, not a rule:`. Refuses if the ID is still a real extractor-discovered tag; removes the row and records its ID in `REPAIRED-FIXTURES` so FLOOR is preserved. |
+| `covers [--json]` | Read every rule ID and its optional covered-symbol set. JSON is a deterministic `rulefloor.covers.v1` document. |
 | `check [--report pw.json] [--all "repo1,repo2"]` | Verify the complete repository gate (below). |
 | `check --only ID` | Fast human feedback for one armed binding. This intentionally omits other rows, global ratchet evaluation, and orphan scanning, so it never replaces full `check`. A matching `--run-profile` executes a non-unit Go row. |
 | `validate ID --mode static\|execute --json` | Validate exactly one rule and emit `rulefloor.validation.v1` JSON. Optional execute-only `--profile NAME` selects the declared profile; optional `--tags TAGS` supplies validated Go build tags. |
@@ -389,6 +392,34 @@ When `--proof-kind` is omitted, a successful `--run` observation is stored as
 Rulefloor does not infer which assertion failed and does not claim the observed
 failure proves the natural-language rule.
 
+## Covered product symbols
+
+`--covers` records the repository's asserted rule-to-product-symbol link. It is
+a comma-separated set, canonicalized into sorted order. Symbol names are
+repository-defined identifiers: Rulefloor validates their representation and
+uniqueness, but does not resolve them, calculate reachability, or claim that a
+test reaches them. Source-graph reach remains a separate review concern.
+
+The read path is `rulefloor covers --json`:
+
+```json
+{"schema_version":"rulefloor.covers.v1","rules":{"CART-1":["Cart.Empty","Cart.Total"],"INV-1":[]}}
+```
+
+Every ledger rule is present; a rule without metadata has `[]`. Human
+`rulefloor covers` prints the same mapping compactly. `declare`, `arm`, and
+`amend` accept `--covers`; omitting it preserves current behavior and metadata.
+`amend ID "unchanged sentence" --covers ...` is the deterministic backfill
+path and does not move the test hash, proof, FLOOR, or RED-PROOFS.
+
+Backward compatibility determines the storage shape. RULE-FLOOR.md remains a
+six-column table. A canonical base64url JSON token is stored as an HTML-comment
+suffix inside the existing red-proof cell. New Rulefloor separates that token
+from the logical proof before proof counting and fingerprinting. Older v0.3.0
+binaries parse and check the ledger because the row still has six columns; they
+treat the suffix as opaque proof text and do not expose the symbol map. A
+seventh table column was rejected because v0.3.0 rejects an altered header.
+
 ## Binary capabilities
 
 `rulefloor capabilities` is binary feature discovery, not repository status or
@@ -423,8 +454,8 @@ Repository status remains the responsibility of `check` and `validate`.
 {"schema_version":"rulefloor.version.v1","version":"v0.5.0"}
 ```
 
-`rulefloor.version.v1`, `rulefloor.validation.v1`, and
-`rulefloor.capabilities.v1` are stable v1 contracts.
+`rulefloor.version.v1`, `rulefloor.validation.v1`,
+`rulefloor.capabilities.v1`, and `rulefloor.covers.v1` are stable v1 contracts.
 Within v1, required fields, field meanings, outcome/reason meanings, and exit
 mapping will not be removed or renamed. Compatible releases may add optional
 fields. Consumers must reject an unknown `schema_version` rather than guessing.
@@ -746,6 +777,10 @@ REPAIRED-FIXTURES: <ID>[,<ID>...]        (optional migration audit)
   A proof created with `--supersede` prefixes its text with
   `supersedes-sha256:<64 lowercase hex>`, linking to the full fingerprint of the
   prior genuine proof without changing the six-column or proof-v1 format.
+  Optional covered symbols are encoded after the logical proof as
+  `<!-- rulefloor-covers-v1:<base64url canonical JSON array> -->`. The token is
+  validated by `check`, is not counted as proof, and is omitted entirely for an
+  empty symbol set. It does not claim symbol existence or test reachability.
 - `hash`: exactly 12 lowercase hex chars for armed rows; `-` for declared
   rows (enforced both ways).
 - Cells cannot contain `|` or newlines (input validation refuses them).

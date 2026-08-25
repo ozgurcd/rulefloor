@@ -56,6 +56,7 @@ func New(rulefloorVersion string, commands []string) Result {
 			machine.VersionSchemaVersion,
 			machine.SchemaVersion,
 			SchemaVersion,
+			ledger.CoversSchemaVersion,
 		},
 		TestKinds:       testKinds,
 		ValidationModes: []string{string(machine.ModeStatic), string(machine.ModeExecute)},
@@ -65,7 +66,7 @@ func New(rulefloorVersion string, commands []string) Result {
 			string(ledger.ProofKindMutationObservation),
 			string(ledger.ProofKindCIReference),
 		},
-		LedgerFeatures: []string{"FLOOR", "RED-PROOFS", "six-column-ledger", "proof-v1", "REPAIRED-FIXTURES"},
+		LedgerFeatures: []string{"FLOOR", "RED-PROOFS", "six-column-ledger", "proof-v1", "covers-v1", "REPAIRED-FIXTURES"},
 		Commands:       commands,
 		ExecutionSemantics: ExecutionSemantics{
 			SupportDependsOn:         "test_kind",
