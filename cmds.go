@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -120,10 +121,60 @@ func cmdDeclare(repo, sentence, id, redProof string, stdout io.Writer) error {
 	return nil
 }
 
+func cmdAmend(repo, id, sentence string, stdout io.Writer) error {
+	if err := validCell(sentence, "rule sentence"); err != nil {
+		return err
+	}
+	l, err := loadLedger(repo)
+	if err != nil {
+		return err
+	}
+	r := l.find(id)
+	if r == nil {
+		return failf("no rule %s", id)
+	}
+	if r.Rule == sentence {
+		return failf("refusing: no-op amendment for %s (sentence unchanged)", id)
+	}
+	old := r.Rule
+	r.Rule = sentence
+	l.maintainRedProofs()
+	if err := saveLedger(repo, l); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "amended %s: %q -> %q; binding and ratchets preserved\n", id, old, sentence)
+	return nil
+}
+
 type proofInput struct {
 	Text      string
 	Kind      string
 	Reference string
+}
+
+type proveOptions struct {
+	Replace   bool
+	Supersede bool
+	Force     bool
+	Run       bool
+	Profile   string
+	Tags      string
+}
+
+type proofChange int
+
+const (
+	proofAdded proofChange = iota
+	proofReplaced
+	proofSuperseded
+	proofForced
+)
+
+type proofUpdate struct {
+	Cell                string
+	Previous            string
+	PreviousFingerprint string
+	Change              proofChange
 }
 
 func cmdArm(repo, id, checkSpec string, proofInput proofInput, stdout io.Writer) error {
@@ -314,12 +365,18 @@ func looksLikeRealProof(cell string) bool {
 // tool can SEE is a non-proof (a "blocked:" pre-arming note or a
 // dateless cell) — never a genuine dated proof. Raises RED-PROOFS
 // through the same maintain path as arm.
-func cmdProve(repo, id string, proofInput proofInput, replace, force bool, stdout io.Writer) error {
+func cmdProve(repo, id string, proofInput proofInput, options proveOptions, stdout io.Writer) error {
+	if err := options.validate(); err != nil {
+		return err
+	}
 	if proofInput.Text == "" {
 		return fatalf("prove: --red-proof is required — describe the watched failure")
 	}
 	if proofInput.Text == "-" {
 		return fatalf("prove: --red-proof must be a real proof, not the \"-\" placeholder")
+	}
+	if options.Run && proofInput.Kind == "" {
+		proofInput.Kind = string(ledger.ProofKindManualObservation)
 	}
 	proofCell, err := buildProofCell("prove", proofInput)
 	if err != nil {
@@ -340,44 +397,150 @@ func cmdProve(repo, id string, proofInput proofInput, replace, force bool, stdou
 	if err != nil {
 		return fatalf("row %s: invalid red-proof: %v", id, err)
 	}
-	switch {
-	case force:
-		// --force overwrites ANY red-proof, including a genuine dated one.
-		// It exists for a proof that is REAL but NOT row-specific — e.g.
-		// byte-identical text copied across two different rules, where the
-		// honest fix is to RE-WATCH each rule's own mutation and record it.
-		// --replace cannot reach a dated cell, and cross-row duplicate
-		// detection cannot either (once the first row is corrected the second
-		// is no longer a duplicate). Loud and explicit; never implicit.
-	case r.RedProof == "-":
-		// The ordinary burndown path: an unproved "-" cell.
-	case replace && !existingProof.GenuineRecord():
-		// --replace narrowly overwrites a tool-visible non-proof (a
-		// "blocked:" pre-arming note or a dateless cell). Refuses a
-		// genuine dated proof below.
-	case replace:
-		if existingProof.Structured {
-			return failf("refusing: rule %s carries a protected structured red-proof record — --replace cannot overwrite an observation record; use --force after re-watching", id)
-		}
-		return failf("refusing: rule %s carries a genuine dated red-proof — --replace only overwrites a non-proof (\"-\", \"blocked:…\", or a dateless cell); use --force to overwrite a real-but-not-row-specific proof after re-watching", id)
-	default:
-		return failf("refusing: rule %s already carries a red-proof (recorded history is not replaced; use --replace for a pre-arming/dateless non-proof, or --force after re-watching a real-but-not-row-specific proof)", id)
+	update, err := prepareProofUpdate(id, r.RedProof, existingProof, proofCell, options)
+	if err != nil {
+		return err
 	}
-	old := r.RedProof
-	r.RedProof = proofCell
+	observedTest := ""
+	if options.Run {
+		observedTest, err = observeBoundFailure(repo, r, options.Profile, options.Tags)
+		if err != nil {
+			return err
+		}
+	}
+	r.RedProof = update.Cell
 	l.maintainRedProofs()
 	if err := saveLedger(repo, l); err != nil {
 		return err
 	}
+	writeProofResult(stdout, id, update, observedTest, l.RedProofs)
+	return nil
+}
+
+func prepareProofUpdate(id, previousCell string, previous ledger.Proof, nextCell string, options proveOptions) (proofUpdate, error) {
+	update := proofUpdate{Cell: nextCell, Previous: previousCell, Change: proofAdded}
 	switch {
-	case force && old != "-":
-		fmt.Fprintf(stdout, "proved %s (FORCED overwrite of prior proof %q); RED-PROOFS %d\n", id, old, l.RedProofs)
-	case replace && old != "-":
-		fmt.Fprintf(stdout, "proved %s (replaced non-proof %q); RED-PROOFS %d\n", id, old, l.RedProofs)
+	case options.Supersede:
+		if !previous.GenuineRecord() {
+			return proofUpdate{}, failf("refusing: rule %s has no genuine proof to supersede (use the ordinary prove path for '-' or --replace for a non-proof)", id)
+		}
+		next, err := ledger.ParseProof(nextCell)
+		if err != nil {
+			return proofUpdate{}, fatalf("prove: invalid replacement proof: %v", err)
+		}
+		next, err = next.Superseding(previous)
+		if err != nil {
+			return proofUpdate{}, fatalf("prove: %v", err)
+		}
+		update.Cell = next.CanonicalText()
+		update.PreviousFingerprint = previous.Fingerprint()
+		update.Change = proofSuperseded
+		if err := validCell(update.Cell, "red-proof"); err != nil {
+			return proofUpdate{}, err
+		}
+		return update, nil
+	case options.Force:
+		if previousCell != "-" {
+			update.Change = proofForced
+		}
+		return update, nil
+	case previousCell == "-":
+		return update, nil
+	case options.Replace && !previous.GenuineRecord():
+		update.Change = proofReplaced
+		return update, nil
+	case options.Replace && previous.Structured:
+		return proofUpdate{}, failf("refusing: rule %s carries a protected structured red-proof record — --replace cannot overwrite an observation record; use --supersede after re-watching", id)
+	case options.Replace:
+		return proofUpdate{}, failf("refusing: rule %s carries a genuine dated red-proof — --replace only overwrites a non-proof (\"-\", \"blocked:…\", or a dateless cell); use --supersede after re-watching", id)
 	default:
-		fmt.Fprintf(stdout, "proved %s; RED-PROOFS %d\n", id, l.RedProofs)
+		return proofUpdate{}, failf("refusing: rule %s already carries a red-proof (use --replace for a pre-arming/dateless non-proof, --supersede after re-watching, or --force for an exceptional override)", id)
+	}
+}
+
+func writeProofResult(stdout io.Writer, id string, update proofUpdate, observedTest string, redProofs int) {
+	observation := observedProofSuffix(observedTest)
+	switch update.Change {
+	case proofSuperseded:
+		fmt.Fprintf(stdout, "proved %s (superseded prior proof sha256:%s%s); RED-PROOFS %d\n", id, update.PreviousFingerprint, observation, redProofs)
+	case proofForced:
+		fmt.Fprintf(stdout, "proved %s (FORCED overwrite of prior proof %q%s); RED-PROOFS %d\n", id, update.Previous, observation, redProofs)
+	case proofReplaced:
+		fmt.Fprintf(stdout, "proved %s (replaced non-proof %q%s); RED-PROOFS %d\n", id, update.Previous, observation, redProofs)
+	case proofAdded:
+		if observedTest != "" {
+			fmt.Fprintf(stdout, "proved %s (observed selected test %s report FAIL); RED-PROOFS %d\n", id, observedTest, redProofs)
+			return
+		}
+		fmt.Fprintf(stdout, "proved %s; RED-PROOFS %d\n", id, redProofs)
+	}
+}
+
+func (o proveOptions) validate() error {
+	replacementModes := 0
+	for _, selected := range []bool{o.Replace, o.Supersede, o.Force} {
+		if selected {
+			replacementModes++
+		}
+	}
+	if replacementModes > 1 {
+		return fatalf("prove: --replace, --supersede, and --force are mutually exclusive")
+	}
+	if !o.Run && (o.Profile != "" || o.Tags != "") {
+		return fatalf("prove: --profile and --tags require --run")
+	}
+	if err := checkengine.ValidateBuildTags(o.Tags); err != nil {
+		return fatalf("prove: %v", err)
 	}
 	return nil
+}
+
+func observeBoundFailure(repo string, row *Row, profile, tags string) (string, error) {
+	binding, err := ledger.InterpretBinding((*ledger.Row)(row))
+	if err != nil {
+		return "", fatalf("row %s: %v", row.ID, err)
+	}
+	if err := checkengine.ValidateExecutionProfile(binding, profile); err != nil {
+		return "", fatalf("prove: --run: %v", err)
+	}
+	if binding.Kind != kindGoTest {
+		return "", fatalf("CANNOT-EVALUATE: prove --run does not support %s checks", binding.Kind)
+	}
+	root, err := repository.CanonicalRoot(repo)
+	if err != nil {
+		return "", fatalf("CANNOT-EVALUATE: prove --run: %v", err)
+	}
+	resolved, err := repository.ConfinedRegularFile(root, binding.File)
+	if err != nil {
+		return "", fatalf("CANNOT-EVALUATE: prove --run: %v", err)
+	}
+	data, err := os.ReadFile(resolved)
+	if err != nil {
+		return "", fatalf("CANNOT-EVALUATE: prove --run: cannot read %s: %v", binding.File, err)
+	}
+	evaluation, err := checkengine.EvaluateSource(extractorRegistry, (*ledger.Row)(row), string(data))
+	if err != nil {
+		return "", fatalf("CANNOT-EVALUATE: prove --run: %v", err)
+	}
+	if len(evaluation.Issues) > 0 {
+		return "", failf("refusing: prove --run static integrity failed for %s: %s", row.ID, evaluation.Issues[0].Message)
+	}
+	execution := checkengine.RunGoTest(context.Background(), checkengine.ExecRunner{}, resolved, evaluation.Ref.FuncName, tags)
+	switch execution.Status {
+	case checkengine.ExecutionFail:
+		return evaluation.Ref.FuncName, nil
+	case checkengine.ExecutionPass:
+		return "", failf("refusing: selected test %s passed; no red-proof observation was recorded", evaluation.Ref.FuncName)
+	default:
+		return "", fatalf("CANNOT-EVALUATE: prove --run %s: %s: %s", evaluation.Ref.FuncName, execution.Reason, execution.Message)
+	}
+}
+
+func observedProofSuffix(test string) string {
+	if test == "" {
+		return ""
+	}
+	return "; observed selected test " + test + " report FAIL"
 }
 
 func buildProofCell(command string, input proofInput) (string, error) {

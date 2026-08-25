@@ -21,7 +21,7 @@ test kinds: go-test (static, execute); playwright (static); vitest (static)
 validation modes: static, execute
 proof kinds: legacy_manual, manual_observation, mutation_observation, ci_reference
 ledger features: FLOOR, RED-PROOFS, six-column-ledger, proof-v1, REPAIRED-FIXTURES
-commands: arm, capabilities, check, declare, diff, help, init, list, prove, redproofs, rehash, repair-fixture-row, show, unarmed, unproved, validate, version
+commands: amend, arm, capabilities, check, declare, diff, help, init, list, prove, redproofs, rehash, repair-fixture-row, show, unarmed, unproved, validate, version
 execution: support depends on test kind; static never executes; execute never falls back to static
 `
 	if stdout != expected {
@@ -45,7 +45,7 @@ func TestCapabilitiesJSONMatchesV1Fixture(t *testing.T) {
 	var result binarycap.Result
 	decodeSingleJSON(t, stdout, &result)
 	want := binarycap.New("dev", []string{
-		"arm", "capabilities", "check", "declare", "diff", "help", "init", "list", "prove",
+		"amend", "arm", "capabilities", "check", "declare", "diff", "help", "init", "list", "prove",
 		"redproofs", "rehash", "repair-fixture-row", "show", "unarmed", "unproved", "validate", "version",
 	})
 	if !reflect.DeepEqual(result, want) {

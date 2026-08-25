@@ -220,11 +220,8 @@ func (s Service) Validate(ctx context.Context, request Request) Result {
 		result.Rule.ProofFingerprint = &fingerprint
 	}
 	if request.Mode == ModeExecute {
-		if request.Profile != "" && request.Profile != declaredProfile {
-			return s.cannotEvaluate(result, "profile_mismatch", fmt.Sprintf("requested profile %q does not match declared profile %q", request.Profile, declaredProfile))
-		}
-		if binding.Execution == ledger.ExecutionStatic && request.Profile == "" {
-			return s.cannotEvaluate(result, "profile_mismatch", fmt.Sprintf("execute mode requires --profile %s", declaredProfile))
+		if err := checkengine.ValidateExecutionProfile(binding, request.Profile); err != nil {
+			return s.cannotEvaluate(result, "profile_mismatch", err.Error())
 		}
 	}
 	selectedExtractor, err := s.registry.ForFile(file)

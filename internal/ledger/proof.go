@@ -20,16 +20,18 @@ const (
 )
 
 type Proof struct {
-	Text       string
-	RecordedAt string
-	Kind       ProofKind
-	Reference  string
-	Structured bool
-	raw        string
+	Text                  string
+	RecordedAt            string
+	Kind                  ProofKind
+	Reference             string
+	SupersedesFingerprint string
+	Structured            bool
+	raw                   string
 }
 
 var (
 	structuredProofRe = regexp.MustCompile(`^\[proof-v1 kind=([a-z_]+)(?: ref=([^\]\s]+))?\] (.+)$`)
+	supersededProofRe = regexp.MustCompile(`^supersedes-sha256:([a-f0-9]{64}) .+`)
 	rfc3339ProofRe    = regexp.MustCompile(`\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\b`)
 	dateProofRe       = regexp.MustCompile(`\b\d{4}-\d{2}-\d{2}\b`)
 )
@@ -77,7 +79,11 @@ func NewProof(text string, kind ProofKind, reference string) (Proof, error) {
 	if kind == ProofKindCIReference && reference == "" {
 		return Proof{}, fmt.Errorf("proof kind ci_reference requires --proof-ref")
 	}
-	proof := Proof{Text: text, Kind: kind, Reference: reference, Structured: true}
+	supersedes, err := supersededFingerprint(text)
+	if err != nil {
+		return Proof{}, err
+	}
+	proof := Proof{Text: text, Kind: kind, Reference: reference, SupersedesFingerprint: supersedes, Structured: true}
 	proof.RecordedAt = recordedProofTime(text)
 	proof.raw = proof.CanonicalText()
 	return proof, nil
@@ -99,11 +105,16 @@ func ParseProof(cell string) (Proof, error) {
 		proof.raw = cell
 		return proof, nil
 	}
+	supersedes, err := supersededFingerprint(cell)
+	if err != nil {
+		return Proof{}, err
+	}
 	return Proof{
-		Text:       cell,
-		RecordedAt: recordedProofTime(cell),
-		Kind:       ProofKindLegacyManual,
-		raw:        cell,
+		Text:                  cell,
+		RecordedAt:            recordedProofTime(cell),
+		Kind:                  ProofKindLegacyManual,
+		SupersedesFingerprint: supersedes,
+		raw:                   cell,
 	}, nil
 }
 
@@ -134,6 +145,35 @@ func (p Proof) Fingerprint() string {
 	}
 	sum := sha256.Sum256([]byte(text))
 	return hex.EncodeToString(sum[:])
+}
+
+func (p Proof) Superseding(previous Proof) (Proof, error) {
+	if !previous.GenuineRecord() {
+		return Proof{}, fmt.Errorf("only a genuine proof record can be superseded")
+	}
+	if !p.GenuineRecord() {
+		return Proof{}, fmt.Errorf("superseding proof must be structured or contain a parseable date")
+	}
+	if p.SupersedesFingerprint != "" {
+		return Proof{}, fmt.Errorf("new proof already carries supersession metadata")
+	}
+	fingerprint := previous.Fingerprint()
+	p.Text = "supersedes-sha256:" + fingerprint + " " + p.Text
+	p.SupersedesFingerprint = fingerprint
+	p.RecordedAt = recordedProofTime(p.Text)
+	p.raw = ""
+	return p, nil
+}
+
+func supersededFingerprint(text string) (string, error) {
+	if !strings.HasPrefix(text, "supersedes-sha256:") {
+		return "", nil
+	}
+	match := supersededProofRe.FindStringSubmatch(text)
+	if match == nil {
+		return "", fmt.Errorf("malformed supersedes-sha256 proof metadata")
+	}
+	return match[1], nil
 }
 
 func recordedProofTime(text string) string {

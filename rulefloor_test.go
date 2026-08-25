@@ -644,9 +644,9 @@ func TestProveForceOverwritesGenuineProof(t *testing.T) {
 	// Record a genuine dated proof on R-2.
 	mustRun(t, "prove", "R-2", "--red-proof", "mutation red-proved 2026-08-18: predicate inverted, watched FAIL, restored", "--repo", repo)
 
-	// --replace refuses it (it is a real dated proof) and points at --force.
-	if code, out := run2(t, "prove", "R-2", "--red-proof", "different", "--replace", "--repo", repo); code != 1 || !strings.Contains(out, "use --force") {
-		t.Fatalf("--replace over a dated proof must refuse and name --force: exit %d:\n%s", code, out)
+	// --replace refuses it (it is a real dated proof) and points at --supersede.
+	if code, out := run2(t, "prove", "R-2", "--red-proof", "different", "--replace", "--repo", repo); code != 1 || !strings.Contains(out, "use --supersede") {
+		t.Fatalf("--replace over a dated proof must refuse and name --supersede: exit %d:\n%s", code, out)
 	}
 
 	// --force overwrites the genuine dated proof, loudly naming the prior text.

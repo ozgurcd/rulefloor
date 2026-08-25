@@ -30,13 +30,15 @@ Usage:
   rulefloor unproved                          [--repo PATH]
   rulefloor redproofs                         [--adopt] [--repo PATH]
   rulefloor declare "sentence" --id ID        [--red-proof TEXT] [--repo PATH]
+  rulefloor amend ID "sentence"               [--repo PATH]
   rulefloor arm ID --check "file @ profile"   --red-proof TEXT [--proof-kind KIND] [--proof-ref URL] [--repo PATH]
-  rulefloor prove ID --red-proof TEXT         [--proof-kind KIND] [--proof-ref URL] [--replace] [--force] [--repo PATH]
+  rulefloor prove ID --red-proof TEXT         [--proof-kind KIND] [--proof-ref URL] [--replace|--supersede|--force]
+                                              [--run [--profile NAME] [--tags T]] [--repo PATH]
   rulefloor rehash ID                         [--repo PATH]
   rulefloor diff ID                           [--repo PATH]
   rulefloor repair-fixture-row ID             [--repo PATH]
   rulefloor check                             [--repo PATH] [--report pw.json] [--all "repo1,repo2"]
-                                              [--run-profile NAME [--tags T]]
+                                              [--run-profile NAME [--tags T]] [--only ID]
   rulefloor validate ID --repo PATH --mode static|execute [--profile NAME] [--tags T] --json
   rulefloor capabilities [--json]
   rulefloor version [--json]                  (also: rulefloor --version)
@@ -58,16 +60,39 @@ RULE-FLOOR.md uses a six-column Markdown table. Proof kinds are
 manual_observation, mutation_observation, and ci_reference. References are
 optional HTTP(S) URLs and are recorded but never fetched or verified.
 `,
-	"prove": `Usage: rulefloor prove ID --red-proof TEXT [--proof-kind KIND] [--proof-ref URL] [--replace] [--force] [--repo PATH]
+	"prove": `Usage: rulefloor prove ID --red-proof TEXT [--proof-kind KIND] [--proof-ref URL] [--replace|--supersede|--force] [--run [--profile NAME] [--tags T]] [--repo PATH]
 
 Record red-proof evidence for an existing rule. Proof text must be non-empty,
 fit on one line, and cannot contain "|". --replace refuses to overwrite a
-genuine proof; --force is the explicit, auditable override.
+genuine proof. --supersede explicitly replaces a genuine re-watched proof and
+links the new record to its full SHA-256 fingerprint. --force remains the loud
+emergency override. --run records nothing unless the selected Go test reports
+FAIL; non-unit profiles require an exact --profile and may use --tags.
 `,
 	"declare": `Usage: rulefloor declare "sentence" --id ID [--red-proof TEXT] [--repo PATH]
 
 Declare one invariant. Optional proof text must fit on one line and cannot
 contain "|" because the ledger is a six-column Markdown table.
+`,
+	"amend": `Usage: rulefloor amend ID "sentence" [--repo PATH]
+
+Replace only an existing rule's sentence. The ID, binding, hash, proof, FLOOR,
+and RED-PROOFS are preserved. A no-op amendment is refused; rules cannot be
+deleted through this command.
+`,
+	"rehash": `Usage: rulefloor rehash ID [--repo PATH]
+
+Accept the current extracted test span after review. Rehash refuses unknown or
+unarmed rules, restricted/skipped tests, and a no-op unchanged fingerprint. It does
+not replace red-proof evidence; use prove --supersede after re-watching an
+extended test, or prove --force only for an exceptional explicit override.
+`,
+	"check": `Usage: rulefloor check [--repo PATH] [--report pw.json] [--all "repo1,repo2"] [--run-profile NAME [--tags T]] [--only ID]
+
+Without --only, verify the complete repository gate including ratchets and
+orphans. --only evaluates one armed binding for fast feedback and is not a
+replacement for the full gate. Legacy unit Go rows execute; other Go profiles
+execute only with a matching --run-profile.
 `,
 	"diff": `Usage: rulefloor diff ID [--repo PATH]
 
@@ -106,6 +131,7 @@ var flagTakesValue = map[string]bool{
 	"--id":          true,
 	"--check":       true,
 	"--report":      true,
+	"--only":        true,
 	"--red-proof":   true,
 	"--all":         true,
 	"--run-profile": true,
@@ -118,6 +144,8 @@ var flagTakesValue = map[string]bool{
 	"--adopt":       false,
 	"--replace":     false,
 	"--force":       false,
+	"--supersede":   false,
+	"--run":         false,
 }
 
 type commandInvocation struct {
@@ -155,15 +183,21 @@ var commandSpecs = map[string]commandSpec{
 	"declare": {1, map[string]bool{"--repo": true, "--id": true, "--red-proof": true}, func(c commandInvocation) error {
 		return cmdDeclare(c.repo, c.pos[0], c.flags["--id"], c.flags["--red-proof"], c.stdout)
 	}},
+	"amend": {2, map[string]bool{"--repo": true}, func(c commandInvocation) error {
+		return cmdAmend(c.repo, c.pos[0], c.pos[1], c.stdout)
+	}},
 	"arm": {1, map[string]bool{"--repo": true, "--check": true, "--red-proof": true, "--proof-kind": true, "--proof-ref": true}, func(c commandInvocation) error {
 		return cmdArm(c.repo, c.pos[0], c.flags["--check"], proofInput{
 			Text: c.flags["--red-proof"], Kind: c.flags["--proof-kind"], Reference: c.flags["--proof-ref"],
 		}, c.stdout)
 	}},
-	"prove": {1, map[string]bool{"--repo": true, "--red-proof": true, "--proof-kind": true, "--proof-ref": true, "--replace": true, "--force": true}, func(c commandInvocation) error {
+	"prove": {1, map[string]bool{"--repo": true, "--red-proof": true, "--proof-kind": true, "--proof-ref": true, "--replace": true, "--supersede": true, "--force": true, "--run": true, "--profile": true, "--tags": true}, func(c commandInvocation) error {
 		return cmdProve(c.repo, c.pos[0], proofInput{
 			Text: c.flags["--red-proof"], Kind: c.flags["--proof-kind"], Reference: c.flags["--proof-ref"],
-		}, c.flags["--replace"] == "true", c.flags["--force"] == "true", c.stdout)
+		}, proveOptions{
+			Replace: c.flags["--replace"] == "true", Supersede: c.flags["--supersede"] == "true", Force: c.flags["--force"] == "true",
+			Run: c.flags["--run"] == "true", Profile: c.flags["--profile"], Tags: c.flags["--tags"],
+		}, c.stdout)
 	}},
 	"rehash": {1, map[string]bool{"--repo": true}, func(c commandInvocation) error {
 		return cmdRehash(c.repo, c.pos[0], c.stdout)
@@ -174,11 +208,13 @@ var commandSpecs = map[string]commandSpec{
 	"repair-fixture-row": {1, map[string]bool{"--repo": true}, func(c commandInvocation) error {
 		return cmdRepairFixtureRow(c.repo, c.pos[0], c.stdout)
 	}},
-	"check": {0, map[string]bool{"--repo": true, "--report": true, "--all": true, "--run-profile": true, "--tags": true}, func(c commandInvocation) error {
+	"check": {0, map[string]bool{"--repo": true, "--report": true, "--all": true, "--run-profile": true, "--tags": true, "--only": true}, func(c commandInvocation) error {
 		if c.flags["--tags"] != "" && c.flags["--run-profile"] == "" {
 			return fatalf("check: --tags requires --run-profile")
 		}
-		return cmdCheck(c.repo, c.flags["--report"], c.flags["--all"], c.flags["--run-profile"], c.flags["--tags"], c.stdout)
+		return cmdCheck(c.repo, checkOptions{
+			ReportPath: c.flags["--report"], AllSpec: c.flags["--all"], RunProfile: c.flags["--run-profile"], Tags: c.flags["--tags"], OnlyID: c.flags["--only"],
+		}, c.stdout)
 	}},
 }
 

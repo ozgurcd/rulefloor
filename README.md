@@ -60,6 +60,11 @@ an explicit, auditable step, never an automatic one. Before accepting drift,
 with the working span; it reports bytes and does not guess whether the change
 is cosmetic or semantic.
 
+The rule ID is permanent, but its human sentence can be clarified with
+**`amend`**. Amendment changes only that sentence; the binding, proof, hash,
+FLOOR, and RED-PROOFS remain unchanged. Legitimate rule deletion remains
+intentionally unavailable because it would violate the ledger ratchet.
+
 ## Install
 
 Homebrew:
@@ -308,12 +313,14 @@ Every command takes `--repo PATH` (default `.`).
 | `unproved` | Armed rows whose red-proof cell is still `-` — the historical proof debt. |
 | `redproofs [--adopt]` | Ratchet status; `--adopt` writes `RED-PROOFS:` onto a legacy ledger at the **measured** count. |
 | `declare "sentence" --id ID` | Append a declared row; raise FLOOR. Optional `--red-proof TEXT`. |
+| `amend ID "sentence"` | Replace only an existing rule sentence. Preserve its ID, binding, proof, hash, FLOOR, and RED-PROOFS; refuse a no-op. |
 | `arm ID --check "file @ profile" --red-proof TEXT` | Pin the tagged test's hash; set enforced-by; raise FLOOR and RED-PROOFS. Refuses skipped tests. `--red-proof` is **required**; optional `--proof-kind` and `--proof-ref` create a structured proof record. |
-| `prove ID --red-proof TEXT [--replace] [--force]` | Record a failure observation on an already-armed `-` row (the debt burndown path); raises RED-PROOFS. Optional `--proof-kind` and `--proof-ref` create a structured record. Ordinary `--replace` cannot overwrite a genuine existing record. `--force` is the explicit, loud override and reports the replaced record; it does not weaken RED-PROOFS. |
+| `prove ID --red-proof TEXT [--replace\|--supersede\|--force] [--run]` | Record an observation on an armed row. `--replace` remains limited to a non-proof. `--supersede` replaces a genuine re-watched proof and stores its full fingerprint link. `--force` is the loud exceptional override. `--run` executes one Go binding and writes only after that selected test reports FAIL. |
 | `rehash ID` | Accept a reviewed body change. Refuses a no-op, refuses skipped tests. |
 | `diff ID` | Read-only comparison of the working bound span with the newest Git revision whose extracted fingerprint exactly matches the ledger. It never classifies drift as cosmetic or semantic. |
 | `repair-fixture-row ID` | One-time migration for an unarmed row explicitly described as `Fixture marker, not a rule:`. Refuses if the ID is still a real extractor-discovered tag; removes the row and records its ID in `REPAIRED-FIXTURES` so FLOOR is preserved. |
-| `check [--report pw.json] [--all "repo1,repo2"]` | Verify everything (below). |
+| `check [--report pw.json] [--all "repo1,repo2"]` | Verify the complete repository gate (below). |
+| `check --only ID` | Fast human feedback for one armed binding. This intentionally omits other rows, global ratchet evaluation, and orphan scanning, so it never replaces full `check`. A matching `--run-profile` executes a non-unit Go row. |
 | `validate ID --mode static\|execute --json` | Validate exactly one rule and emit `rulefloor.validation.v1` JSON. Optional execute-only `--profile NAME` selects the declared profile; optional `--tags TAGS` supplies validated Go build tags. |
 | `capabilities [--json]` | Describe features compiled into this binary without reading a repository or ledger. |
 | `version --json` | Emit `rulefloor.version.v1` JSON using the same release-stamped version as human output. |
@@ -325,9 +332,10 @@ Refusals you will meet, all deliberate:
   `--red-proof` (or with the `-` placeholder) · `arm`/`rehash` a test
   that has `.skip`/`.only` or calls `t.Skip*` · `rehash` when nothing
   changed · `redproofs --adopt` when the header already exists ·
-  `prove --replace` over a genuine dated proof (only a `blocked:…` or
-  dateless non-proof may be overwritten — a real-but-not-row-specific
-  proof needs `--force` after re-watching).
+  `amend` with an unchanged or invalid sentence · `prove --replace` over a
+  genuine proof (only a `blocked:…` or dateless non-proof may be replaced) ·
+  `prove --supersede` without a genuine prior record · `prove --run` when the
+  selected test passes or cannot execute.
 
 ### The red-proof obligation
 
@@ -350,7 +358,7 @@ verified by Rulefloor. Since the RED-PROOFS ratchet:
   is exactly the lie the ratchet exists against. `unproved` lists that
   debt; it shrinks only through `prove` (a newly recorded observation) or new
   arms.
-  (Any write operation — declare, arm, rehash — also adopts the header on
+  (Any write operation — declare, amend, arm, prove, rehash — also adopts the header on
   a legacy ledger, at the same measured-count rule.)
 
 The proof text itself is documentation: the tool validates its representation,
@@ -361,6 +369,25 @@ references are stored and syntax-checked only; Rulefloor does not fetch or
 verify them. Proof text is one ledger cell: it cannot contain a newline or `|`.
 `rulefloor help arm` and `rulefloor help prove` show these constraints before
 a write is attempted.
+
+When a test extension has been legitimately re-watched, `prove --supersede`
+records a new proof whose text begins with
+`supersedes-sha256:<previous-full-fingerprint>`. This is compatible with older
+proof-v1 readers and preserves a deterministic link to the prior record; Git
+history remains the source for that record's full text. It does not mean the
+prior observation was false. `--force` remains available for exceptional
+correction but deliberately creates no supersession claim.
+
+`prove --run` is a narrow observation aid, not a mutation engine. It first
+checks the selected binding's current tag and hash, then invokes only its Go
+test with an argument vector. It records the supplied proof only when Go reports
+that exact test as failed. A pass is refused and a skip, compile/setup failure,
+unsupported kind, or unavailable toolchain is fatal CANNOT-EVALUATE. For a
+non-unit profile, pass the exact declared `--profile` and any required `--tags`.
+When `--proof-kind` is omitted, a successful `--run` observation is stored as
+`manual_observation`; an explicit supported kind remains available.
+Rulefloor does not infer which assertion failed and does not claim the observed
+failure proves the natural-language rule.
 
 ## Binary capabilities
 
@@ -393,7 +420,7 @@ Repository status remains the responsibility of `check` and `validate`.
 `rulefloor version --json` writes one JSON document to stdout:
 
 ```json
-{"schema_version":"rulefloor.version.v1","version":"v0.4.0"}
+{"schema_version":"rulefloor.version.v1","version":"v0.5.0"}
 ```
 
 `rulefloor.version.v1`, `rulefloor.validation.v1`, and
@@ -497,12 +524,19 @@ means a binding nobody is tracking — that's a failure, not a warning.
 given, comma-separated) and fails if any fails. Not combinable with
 `--report` (a report belongs to one repo's run).
 
+**`--only ID`** uses the same row extraction, static checks, and execution
+behavior for one armed binding, avoiding one subprocess per unrelated unit row.
+Its output states that it is not a full repository gate. It deliberately skips
+other rows, FLOOR/RED-PROOFS comparison, and orphan discovery; run ordinary
+`check` before merging. It cannot combine with `--all` or `--report`.
+
 ## Wiring into your entrypoints
 
 A ledger nobody checks is decoration. Put `check` inside the commands people
-already run — and put it early: it is cheap (hashing plus a few single-test
-`go test` runs), so a tampered rule fails the aggregate before the
-expensive gates spend their minutes.
+already run — and put it early. Full `check` launches one isolated `go test`
+per executable Go row in deterministic ledger order; large ledgers may take
+minutes. Use `check --only ID` for local iteration, but retain full `check` in
+the gate so unrelated drift and orphan tags cannot hide.
 
 **Makefile:**
 
@@ -612,6 +646,8 @@ business-truth oracle, or a claim that every dependency of a test is unchanged.
 - Historical fixture-only row repair is explicit and retained in the ledger;
   it cannot be used for armed or ordinary declared rules.
 - RED-PROOFS never decreases once adopted; arming demands a red-proof.
+- Sentence amendment cannot change a binding or either ratchet, and legitimate
+  row deletion remains unavailable.
 - No command or flag lowers `check`'s strictness.
 - CANNOT-EVALUATE is always fatal (exit 2), never a skip.
 
@@ -626,6 +662,9 @@ business-truth oracle, or a claim that every dependency of a test is unchanged.
   commits, protected branches, and repository review are the trust boundary for
   who changed a ledger, whether `rehash` was justified, and whether proof
   replacement was appropriately reviewed.
+- `prove --run` establishes only that the selected Go test reported failure in
+  that invocation. It cannot establish why the test failed, whether a mutation
+  was appropriate, or whether the human proof text is truthful.
 - `rehash` deliberately accepts the current tagged test span after review; it
   does not decide whether that edit preserves the rule's meaning.
 - `diff` uses Git only to locate source bytes whose extracted fingerprint
@@ -665,6 +704,9 @@ business-truth oracle, or a claim that every dependency of a test is unchanged.
   hand-lowered FLOOR is.
 - The proof text and optional reference are recorded metadata. Their fingerprint
   detects representation drift; it is not evidence that the observation is true.
+- A supersession fingerprint links the active proof to the exact prior ledger
+  cell. The prior text remains in Git history rather than an in-ledger history
+  database; the link does not classify either observation as true or false.
 
 ## Ledger format specification
 
@@ -701,6 +743,9 @@ REPAIRED-FIXTURES: <ID>[,<ID>...]        (optional migration audit)
   reference. Missing time or provenance remains unknown; it is never invented.
   References cannot contain whitespace, credentials, fragments, or non-HTTP(S)
   schemes, and are stored without being fetched or verified.
+  A proof created with `--supersede` prefixes its text with
+  `supersedes-sha256:<64 lowercase hex>`, linking to the full fingerprint of the
+  prior genuine proof without changing the six-column or proof-v1 format.
 - `hash`: exactly 12 lowercase hex chars for armed rows; `-` for declared
   rows (enforced both ways).
 - Cells cannot contain `|` or newlines (input validation refuses them).

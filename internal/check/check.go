@@ -70,6 +70,16 @@ func EvaluateSource(registry *extract.Registry, row *ledger.Row, source string) 
 
 func SupportsExecution(kind extract.Kind) bool { return kind == extract.KindGoTest }
 
+func ValidateExecutionProfile(binding ledger.Binding, requested string) error {
+	if requested != "" && requested != binding.Profile {
+		return fmt.Errorf("requested profile %q does not match declared profile %q", requested, binding.Profile)
+	}
+	if binding.Execution == ledger.ExecutionStatic && requested == "" {
+		return fmt.Errorf("execute mode requires --profile %s", binding.Profile)
+	}
+	return nil
+}
+
 var skipDirectories = map[string]bool{".git": true, "node_modules": true, "vendor": true, "testdata": true}
 
 type LocatedTag struct {

@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-08-25
+
+### Added
+
+- `rulefloor amend ID "sentence"` changes only existing rule prose while
+  preserving the ID, binding, proof, hash, FLOOR, and RED-PROOFS.
+- `rulefloor check --only ID` provides fast selected-binding feedback using
+  the same extraction/check/execution behavior, with loud output that it is not
+  the full repository gate.
+- `prove --supersede` explicitly refreshes a genuine re-watched proof and
+  persists the previous proof's full SHA-256 link in backward-compatible text
+  metadata.
+- `prove --run` performs static integrity first and records nothing unless the
+  exact selected Go test reports FAIL. Exact profiles and validated build tags
+  are supported without shell execution.
+- Complete command help for `rehash`, `amend`, and selected `check` workflows.
+
+### Changed
+
+- `--replace` remains narrow, but its refusal now directs legitimate re-watches
+  to `--supersede`; `--force` is reserved for exceptional overrides.
+- `rulefloor.capabilities.v1` advertises the additive `amend` command. The
+  version and validation schemas and the six-column ledger remain unchanged.
+- Shared execution-profile validation now drives machine validation and
+  observed red-proof execution.
+
+### Security
+
+- `prove --run` confines the ledger/check path, validates profile and tag
+  inputs, invokes Go directly with an argument vector, and treats skips,
+  unsupported runners, setup failures, and missing toolchains as fatal.
+
 ## [0.4.0] - 2026-08-24
 
 ### Added

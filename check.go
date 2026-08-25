@@ -14,12 +14,26 @@ import (
 	"github.com/ozgurcd/rulefloor/internal/repository"
 )
 
-func cmdCheck(repo, reportPath, allSpec, runProfile, tags string, stdout io.Writer) error {
-	if err := checkengine.ValidateBuildTags(tags); err != nil {
+type checkOptions struct {
+	ReportPath string
+	AllSpec    string
+	RunProfile string
+	Tags       string
+	OnlyID     string
+}
+
+func cmdCheck(repo string, options checkOptions, stdout io.Writer) error {
+	if err := checkengine.ValidateBuildTags(options.Tags); err != nil {
 		return fatalf("check: %v", err)
 	}
-	if allSpec == "" {
-		n, err := checkRepo(repo, reportPath, runProfile, tags, stdout)
+	if options.OnlyID != "" {
+		if options.AllSpec != "" || options.ReportPath != "" {
+			return fatalf("check: --only cannot be combined with --all or --report")
+		}
+		return checkOnly(repo, options.OnlyID, options.RunProfile, options.Tags, stdout)
+	}
+	if options.AllSpec == "" {
+		n, err := checkRepo(repo, options.ReportPath, options.RunProfile, options.Tags, stdout)
 		if err != nil {
 			return err
 		}
@@ -28,14 +42,14 @@ func cmdCheck(repo, reportPath, allSpec, runProfile, tags string, stdout io.Writ
 		}
 		return nil
 	}
-	if reportPath != "" {
+	if options.ReportPath != "" {
 		return fatalf("check: --report cannot be combined with --all")
 	}
-	if runProfile != "" {
+	if options.RunProfile != "" {
 		return fatalf("check: --run-profile cannot be combined with --all (a profile run belongs to one repo)")
 	}
 	var targets []string
-	for _, path := range strings.Split(allSpec, ",") {
+	for _, path := range strings.Split(options.AllSpec, ",") {
 		if path = strings.TrimSpace(path); path != "" {
 			targets = append(targets, path)
 		}
@@ -59,6 +73,39 @@ func cmdCheck(repo, reportPath, allSpec, runProfile, tags string, stdout io.Writ
 	if total > 0 {
 		return failf("check FAILED: %d problem(s) across %d repos", total, len(targets))
 	}
+	return nil
+}
+
+func checkOnly(repo, id, runProfile, tags string, stdout io.Writer) error {
+	model, err := loadLedger(repo)
+	if err != nil {
+		return err
+	}
+	row := model.find(id)
+	if row == nil {
+		return failf("no rule %s", id)
+	}
+	if !row.Armed() {
+		return failf("refusing: rule %s is not armed", id)
+	}
+	binding, err := ledger.InterpretBinding((*ledger.Row)(row))
+	if err != nil {
+		return fatalf("row %s: %v", id, err)
+	}
+	if runProfile != "" && runProfile != binding.Profile {
+		return fatalf("check: --only %s requested profile %q but the row declares %q", id, runProfile, binding.Profile)
+	}
+	problems, err := checkRow(repo, row, rowCheckOptions{runProfile: runProfile, tags: tags})
+	if err != nil {
+		return err
+	}
+	if len(problems) > 0 {
+		for _, problem := range problems {
+			fmt.Fprintf(stdout, "FAIL %s: %s\n", id, problem)
+		}
+		return failf("check --only FAILED: %d problem(s) for %s", len(problems), id)
+	}
+	fmt.Fprintf(stdout, "PASS %s (%s)\nselected check OK (not a full repository gate)\n", id, row.Check)
 	return nil
 }
 
