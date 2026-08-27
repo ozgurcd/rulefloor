@@ -47,7 +47,8 @@ func cmdCapabilities(jsonOutput bool, stdout io.Writer) error {
 	fmt.Fprintf(stdout, "validation modes: %s\n", strings.Join(result.ValidationModes, ", "))
 	fmt.Fprintf(stdout, "proof kinds: %s\n", strings.Join(result.ProofKinds, ", "))
 	fmt.Fprintf(stdout, "ledger features: %s\n", strings.Join(result.LedgerFeatures, ", "))
+	fmt.Fprintf(stdout, "structural reach: %s exact stable IDs for %s (possible is insufficient)\n", result.StructuralReach.Provider, strings.Join(result.StructuralReach.TestKinds, ", "))
 	fmt.Fprintf(stdout, "commands: %s\n", strings.Join(result.Commands, ", "))
-	fmt.Fprintln(stdout, "execution: support depends on test kind; static never executes; execute never falls back to static")
+	fmt.Fprintln(stdout, "execution: persisted policy; legacy profiles compatible; static never executes; execute never falls back to static")
 	return nil
 }

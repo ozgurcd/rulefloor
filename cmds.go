@@ -84,7 +84,14 @@ func cmdUnarmed(repo string, stdout io.Writer) error {
 	return nil
 }
 
-func cmdDeclare(repo, sentence, id, redProof, coversSpec string, coversSet bool, stdout io.Writer) error {
+type bindingWriteInput struct {
+	CoversSpec    string
+	CoversSet     bool
+	ExecutionSpec string
+	ExecutionSet  bool
+}
+
+func cmdDeclare(repo, sentence, id, redProof string, input bindingWriteInput, stdout io.Writer) error {
 	if id == "" {
 		return fatalf("declare: --id is required")
 	}
@@ -102,13 +109,20 @@ func cmdDeclare(repo, sentence, id, redProof, coversSpec string, coversSet bool,
 	if _, err := ledger.ParseProof(redProof); err != nil {
 		return fatalf("declare: invalid red-proof: %v", err)
 	}
-	coveredSymbols, err := parseCoversFlag("declare", coversSpec, coversSet, false)
+	coveredSymbols, err := parseCoversFlag("declare", input.CoversSpec, input.CoversSet, false)
 	if err != nil {
 		return err
 	}
 	l, err := loadLedger(repo)
 	if err != nil {
 		return err
+	}
+	reachability := ledger.ReachabilityPolicy("")
+	if input.CoversSet {
+		coveredSymbols, reachability, err = prepareCoveredSymbols("declare", repo, coveredSymbols)
+		if err != nil {
+			return err
+		}
 	}
 	if l.find(id) != nil {
 		return failf("refusing: rule %s already exists", id)
@@ -118,7 +132,7 @@ func cmdDeclare(repo, sentence, id, redProof, coversSpec string, coversSet bool,
 	}
 	l.Rows = append(l.Rows, Row{
 		ID: id, Rule: sentence, EnforcedBy: "-", Check: "NONE", RedProof: redProof, Hash: "-",
-		CoveredSymbols: coveredSymbols,
+		CoveredSymbols: coveredSymbols, ReachabilityPolicy: reachability,
 	})
 	l.raiseFloor(l.effectiveCount())
 	l.maintainRedProofs()
@@ -129,11 +143,11 @@ func cmdDeclare(repo, sentence, id, redProof, coversSpec string, coversSet bool,
 	return nil
 }
 
-func cmdAmend(repo, id, sentence, coversSpec string, coversSet bool, stdout io.Writer) error {
+func cmdAmend(repo, id, sentence string, input bindingWriteInput, stdout io.Writer) error {
 	if err := validCell(sentence, "rule sentence"); err != nil {
 		return err
 	}
-	coveredSymbols, err := parseCoversFlag("amend", coversSpec, coversSet, true)
+	coveredSymbols, err := parseCoversFlag("amend", input.CoversSpec, input.CoversSet, true)
 	if err != nil {
 		return err
 	}
@@ -145,21 +159,60 @@ func cmdAmend(repo, id, sentence, coversSpec string, coversSet bool, stdout io.W
 	if r == nil {
 		return failf("no rule %s", id)
 	}
-	sentenceChanged := r.Rule != sentence
-	coversChanged := coversSet && !slices.Equal(r.CoveredSymbols, coveredSymbols)
-	if !sentenceChanged && !coversChanged {
-		return failf("refusing: no-op amendment for %s (sentence and covered symbols unchanged)", id)
+	next := *r
+	next.CoveredSymbols = append([]string{}, r.CoveredSymbols...)
+	if input.ExecutionSet {
+		if !r.Armed() {
+			return fatalf("amend: --execution requires an armed rule")
+		}
+		file, profile, err := splitCheck(r.Check)
+		if err != nil {
+			return fatalf("amend: %v", err)
+		}
+		next.ExecutionPolicy, err = parseExecutionPolicy("amend", input.ExecutionSpec, true, bindingSpec{Kind: r.EnforcedBy, File: file, Profile: profile})
+		if err != nil {
+			return err
+		}
+	}
+	if input.CoversSet {
+		next.CoveredSymbols, next.ReachabilityPolicy, err = prepareCoveredSymbols("amend", repo, coveredSymbols)
+		if err != nil {
+			return err
+		}
+		next.TestSymbol = ""
+		if next.ReachabilityPolicy == ledger.ReachabilityExact {
+			if next.Armed() {
+				file, _, err := splitCheck(next.Check)
+				if err != nil {
+					return fatalf("amend: %v", err)
+				}
+				ref, err := resolveRef(repo, file, next.ID, next.EnforcedBy)
+				if err != nil {
+					return err
+				}
+				if ref.hash() != next.Hash {
+					return failf("refusing: bound test changed; review and rehash %s before changing protected symbols", next.ID)
+				}
+				if err := verifyInitialProtectedReach(repo, &next, ref.FuncName, newGraphClient()); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	next.Rule = sentence
+	sentenceChanged := r.Rule != next.Rule
+	coversChanged := !slices.Equal(r.CoveredSymbols, next.CoveredSymbols) || r.ReachabilityPolicy != next.ReachabilityPolicy || r.TestSymbol != next.TestSymbol
+	executionChanged := r.ExecutionPolicy != next.ExecutionPolicy
+	if !sentenceChanged && !coversChanged && !executionChanged {
+		return failf("refusing: no-op amendment for %s (sentence, covered symbols, and execution unchanged)", id)
 	}
 	old := r.Rule
-	r.Rule = sentence
-	if coversSet {
-		r.CoveredSymbols = coveredSymbols
-	}
+	*r = next
 	l.maintainRedProofs()
 	if err := saveLedger(repo, l); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "amended %s: %q -> %q; %d covered symbols; binding and ratchets preserved\n", id, old, sentence, len(r.CoveredSymbols))
+	fmt.Fprintf(stdout, "amended %s: %q -> %q; %d covered symbols; execution %s; binding and ratchets preserved\n", id, old, sentence, len(r.CoveredSymbols), interpretedExecution(r))
 	return nil
 }
 
@@ -194,7 +247,7 @@ type proofUpdate struct {
 	Change              proofChange
 }
 
-func cmdArm(repo, id, checkSpec string, proofInput proofInput, coversSpec string, coversSet bool, stdout io.Writer) error {
+func cmdArm(repo, id, checkSpec string, proofInput proofInput, input bindingWriteInput, stdout io.Writer) error {
 	if checkSpec == "" {
 		return fatalf("arm: --check \"<file> @ <profile>\" is required")
 	}
@@ -211,7 +264,7 @@ func cmdArm(repo, id, checkSpec string, proofInput proofInput, coversSpec string
 	if err != nil {
 		return err
 	}
-	coveredSymbols, err := parseCoversFlag("arm", coversSpec, coversSet, false)
+	coveredSymbols, err := parseCoversFlag("arm", input.CoversSpec, input.CoversSet, false)
 	if err != nil {
 		return err
 	}
@@ -223,7 +276,13 @@ func cmdArm(repo, id, checkSpec string, proofInput proofInput, coversSpec string
 	if err != nil {
 		return err
 	}
-	binding, err := ledger.InterpretBinding(&ledger.Row{EnforcedBy: kind, Check: file + " @ " + profile})
+	executionPolicy, err := parseExecutionPolicy("arm", input.ExecutionSpec, input.ExecutionSet, bindingSpec{Kind: kind, File: file, Profile: profile})
+	if err != nil {
+		return err
+	}
+	binding, err := ledger.InterpretBinding(&ledger.Row{
+		EnforcedBy: kind, Check: file + " @ " + profile, ExecutionPolicy: executionPolicy,
+	})
 	if err != nil {
 		return fatalf("arm: %v", err)
 	}
@@ -238,6 +297,15 @@ func cmdArm(repo, id, checkSpec string, proofInput proofInput, coversSpec string
 	if r.Armed() {
 		return failf("refusing: rule %s is already armed (use rehash to accept a changed body)", id)
 	}
+	next := *r
+	next.CoveredSymbols = append([]string{}, r.CoveredSymbols...)
+	if input.CoversSet {
+		next.CoveredSymbols, next.ReachabilityPolicy, err = prepareCoveredSymbols("arm", repo, coveredSymbols)
+		if err != nil {
+			return err
+		}
+		next.TestSymbol = ""
+	}
 	ref, err := resolveRef(repo, file, id, kind)
 	if err != nil {
 		return err
@@ -245,13 +313,17 @@ func cmdArm(repo, id, checkSpec string, proofInput proofInput, coversSpec string
 	if err := refuseSkips(ref, binding.Execution); err != nil {
 		return err
 	}
-	r.RedProof = proofCell
-	if coversSet {
-		r.CoveredSymbols = coveredSymbols
+	next.RedProof = proofCell
+	next.EnforcedBy = kind
+	next.Check = file + " @ " + profile
+	next.Hash = ref.hash()
+	next.ExecutionPolicy = executionPolicy
+	if next.ReachabilityPolicy == ledger.ReachabilityExact {
+		if err := verifyInitialProtectedReach(repo, &next, ref.FuncName, newGraphClient()); err != nil {
+			return err
+		}
 	}
-	r.EnforcedBy = kind
-	r.Check = file + " @ " + profile
-	r.Hash = ref.hash()
+	*r = next
 	l.raiseFloor(len(l.Rows))
 	l.maintainRedProofs()
 	if err := saveLedger(repo, l); err != nil {
@@ -294,7 +366,15 @@ func cmdRehash(repo, id string, stdout io.Writer) error {
 		return failf("refusing: no-op rehash for %s (hash unchanged: %s)", id, h)
 	}
 	old := r.Hash
-	r.Hash = h
+	next := *r
+	next.CoveredSymbols = append([]string{}, r.CoveredSymbols...)
+	next.Hash = h
+	if next.ReachabilityPolicy == ledger.ReachabilityExact {
+		if err := verifyInitialProtectedReach(repo, &next, ref.FuncName, newGraphClient()); err != nil {
+			return err
+		}
+	}
+	*r = next
 	l.maintainRedProofs()
 	if err := saveLedger(repo, l); err != nil {
 		return err
@@ -603,6 +683,14 @@ func parseCoversFlag(command, value string, set, allowEmpty bool) ([]string, err
 		return nil, fatalf("%s: --covers requires at least one symbol", command)
 	}
 	return symbols, nil
+}
+
+func interpretedExecution(row *Row) string {
+	binding, err := ledger.InterpretBinding((*ledger.Row)(row))
+	if err != nil {
+		return "invalid"
+	}
+	return string(binding.Execution)
 }
 
 // cmdRedProofs prints the ratchet state; with --adopt it writes the

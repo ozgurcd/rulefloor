@@ -23,6 +23,7 @@ type Result struct {
 	LedgerFeatures     []string           `json:"ledger_features"`
 	Commands           []string           `json:"commands"`
 	ExecutionSemantics ExecutionSemantics `json:"execution_semantics"`
+	StructuralReach    StructuralReach    `json:"structural_reach"`
 }
 
 type TestKind struct {
@@ -35,6 +36,17 @@ type ExecutionSemantics struct {
 	SupportDependsOn         string `json:"support_depends_on"`
 	StaticValidationExecutes bool   `json:"static_validation_executes"`
 	ExecuteFallsBackToStatic bool   `json:"execute_falls_back_to_static"`
+	PolicyPersisted          bool   `json:"policy_persisted"`
+	LegacyProfileCompatible  bool   `json:"legacy_profile_compatible"`
+}
+
+type StructuralReach struct {
+	Provider             string   `json:"provider"`
+	TestKinds            []string `json:"test_kinds"`
+	SymbolIdentity       string   `json:"symbol_identity"`
+	RequiredResolution   string   `json:"required_resolution"`
+	PossibleIsSufficient bool     `json:"possible_is_sufficient"`
+	EvidenceRequirements []string `json:"evidence_requirements"`
 }
 
 func New(rulefloorVersion string, commands []string) Result {
@@ -66,12 +78,19 @@ func New(rulefloorVersion string, commands []string) Result {
 			string(ledger.ProofKindMutationObservation),
 			string(ledger.ProofKindCIReference),
 		},
-		LedgerFeatures: []string{"FLOOR", "RED-PROOFS", "six-column-ledger", "proof-v1", "covers-v1", "REPAIRED-FIXTURES"},
+		LedgerFeatures: []string{"FLOOR", "RED-PROOFS", "six-column-ledger", "proof-v1", "covers-v1", "binding-v1", "exact-symbol-reach", "REPAIRED-FIXTURES"},
 		Commands:       commands,
 		ExecutionSemantics: ExecutionSemantics{
 			SupportDependsOn:         "test_kind",
 			StaticValidationExecutes: false,
 			ExecuteFallsBackToStatic: false,
+			PolicyPersisted:          true,
+			LegacyProfileCompatible:  true,
+		},
+		StructuralReach: StructuralReach{
+			Provider: "gograph", TestKinds: []string{string(extract.KindGoTest)},
+			SymbolIdentity: "stable_id", RequiredResolution: "exact", PossibleIsSufficient: false,
+			EvidenceRequirements: []string{"persisted", "current", "complete", "precise", "typed_complete"},
 		},
 	}
 }

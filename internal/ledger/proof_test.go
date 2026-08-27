@@ -47,7 +47,7 @@ func TestStructuredProofRoundTripAndFingerprintDeterminism(t *testing.T) {
 		ID: "PROOF-1", Rule: "A structured proof record survives.", EnforcedBy: "go-test",
 		Check: "rule_test.go @ unit", RedProof: cell, Hash: "abcdef012345",
 	}}}
-	roundTrip, err := Parse(model.Serialize())
+	roundTrip, err := Parse(Serialize(model))
 	if err != nil {
 		t.Fatal(err)
 	}

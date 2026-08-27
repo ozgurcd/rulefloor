@@ -30,9 +30,9 @@ Usage:
   rulefloor unproved                          [--repo PATH]
   rulefloor redproofs                         [--adopt] [--repo PATH]
   rulefloor declare "sentence" --id ID        [--red-proof TEXT] [--covers SYMBOLS] [--repo PATH]
-  rulefloor amend ID "sentence"               [--covers SYMBOLS] [--repo PATH]
+  rulefloor amend ID "sentence"               [--covers SYMBOLS] [--execution static|execute] [--repo PATH]
   rulefloor arm ID --check "file @ profile"   --red-proof TEXT [--proof-kind KIND] [--proof-ref URL]
-                                              [--covers SYMBOLS] [--repo PATH]
+                                              [--covers SYMBOLS] [--execution static|execute] [--repo PATH]
   rulefloor prove ID --red-proof TEXT         [--proof-kind KIND] [--proof-ref URL] [--replace|--supersede|--force]
                                               [--run [--profile NAME] [--tags T]] [--repo PATH]
   rulefloor rehash ID                         [--repo PATH]
@@ -55,14 +55,18 @@ rehash accepts reviewed source drift; prove records red-proof debt.
 `
 
 var commandHelp = map[string]string{
-	"arm": `Usage: rulefloor arm ID --check "file @ profile" --red-proof TEXT [--proof-kind KIND] [--proof-ref URL] [--covers SYMBOLS] [--repo PATH]
+	"arm": `Usage: rulefloor arm ID --check "file @ profile" --red-proof TEXT [--proof-kind KIND] [--proof-ref URL] [--covers SYMBOLS] [--execution static|execute] [--repo PATH]
 
 Bind a declared rule to its tagged check and record an observed red proof.
 Proof text must be non-empty, fit on one line, and cannot contain "|" because
 RULE-FLOOR.md uses a six-column Markdown table. Proof kinds are
 manual_observation, mutation_observation, and ci_reference. References are
 optional HTTP(S) URLs and are recorded but never fetched or verified.
---covers accepts a comma-separated set of protected product symbols.
+--covers accepts a comma-separated set of protected product symbols. An
+all-Gograph-stable-ID set opts a Go binding into exact reach enforcement;
+legacy labels remain metadata. Mixed identity modes are refused.
+--execution persists the binding's default check policy. When omitted, the
+legacy default is interpreted once and stored for backward compatibility.
 `,
 	"prove": `Usage: rulefloor prove ID --red-proof TEXT [--proof-kind KIND] [--proof-ref URL] [--replace|--supersede|--force] [--run [--profile NAME] [--tags T]] [--repo PATH]
 
@@ -78,12 +82,15 @@ FAIL; non-unit profiles require an exact --profile and may use --tags.
 Declare one invariant. Optional proof text must fit on one line and cannot
 contain "|" because the ledger is a six-column Markdown table. --covers stores
 an optional comma-separated symbol set without changing that table shape.
+All-Gograph-stable-ID sets are resolved now and require exact reach when armed.
 `,
-	"amend": `Usage: rulefloor amend ID "sentence" [--covers SYMBOLS] [--repo PATH]
+	"amend": `Usage: rulefloor amend ID "sentence" [--covers SYMBOLS] [--execution static|execute] [--repo PATH]
 
 Replace an existing rule's sentence and, when --covers is present, its covered
 symbol set. Use --covers= to clear that set. The ID, binding, hash, proof,
-FLOOR, and RED-PROOFS are preserved. A no-op amendment is refused; rules cannot be deleted.
+FLOOR, and RED-PROOFS are preserved. --execution explicitly migrates an armed
+legacy binding. Stable Gograph IDs require current exact reach for armed Go
+rows. A no-op amendment is refused; rules cannot be deleted.
 `,
 	"covers": `Usage: rulefloor covers [--json] [--repo PATH]
 
@@ -151,6 +158,7 @@ var flagTakesValue = map[string]bool{
 	"--proof-kind":  true,
 	"--proof-ref":   true,
 	"--covers":      true,
+	"--execution":   true,
 	"--json":        false,
 	"--adopt":       false,
 	"--replace":     false,
@@ -193,17 +201,19 @@ var commandSpecs = map[string]commandSpec{
 	}},
 	"declare": {1, map[string]bool{"--repo": true, "--id": true, "--red-proof": true, "--covers": true}, func(c commandInvocation) error {
 		covers, coversSet := c.flags["--covers"]
-		return cmdDeclare(c.repo, c.pos[0], c.flags["--id"], c.flags["--red-proof"], covers, coversSet, c.stdout)
+		return cmdDeclare(c.repo, c.pos[0], c.flags["--id"], c.flags["--red-proof"], bindingWriteInput{CoversSpec: covers, CoversSet: coversSet}, c.stdout)
 	}},
-	"amend": {2, map[string]bool{"--repo": true, "--covers": true}, func(c commandInvocation) error {
+	"amend": {2, map[string]bool{"--repo": true, "--covers": true, "--execution": true}, func(c commandInvocation) error {
 		covers, coversSet := c.flags["--covers"]
-		return cmdAmend(c.repo, c.pos[0], c.pos[1], covers, coversSet, c.stdout)
+		execution, executionSet := c.flags["--execution"]
+		return cmdAmend(c.repo, c.pos[0], c.pos[1], bindingWriteInput{CoversSpec: covers, CoversSet: coversSet, ExecutionSpec: execution, ExecutionSet: executionSet}, c.stdout)
 	}},
-	"arm": {1, map[string]bool{"--repo": true, "--check": true, "--red-proof": true, "--proof-kind": true, "--proof-ref": true, "--covers": true}, func(c commandInvocation) error {
+	"arm": {1, map[string]bool{"--repo": true, "--check": true, "--red-proof": true, "--proof-kind": true, "--proof-ref": true, "--covers": true, "--execution": true}, func(c commandInvocation) error {
 		covers, coversSet := c.flags["--covers"]
+		execution, executionSet := c.flags["--execution"]
 		return cmdArm(c.repo, c.pos[0], c.flags["--check"], proofInput{
 			Text: c.flags["--red-proof"], Kind: c.flags["--proof-kind"], Reference: c.flags["--proof-ref"],
-		}, covers, coversSet, c.stdout)
+		}, bindingWriteInput{CoversSpec: covers, CoversSet: coversSet, ExecutionSpec: execution, ExecutionSet: executionSet}, c.stdout)
 	}},
 	"prove": {1, map[string]bool{"--repo": true, "--red-proof": true, "--proof-kind": true, "--proof-ref": true, "--replace": true, "--supersede": true, "--force": true, "--run": true, "--profile": true, "--tags": true}, func(c commandInvocation) error {
 		return cmdProve(c.repo, c.pos[0], proofInput{

@@ -53,7 +53,10 @@ Three verbs, one loop:
    quietly vanish.
 3. **`check`** — re-derives everything from the working tree and compares it
    to the ledger. Any drift is a failure: changed body, skipped test, missing
-   tag, deleted row, tag without a row.
+   tag, deleted row, tag without a row. For a Go binding that declares stable
+   protected-symbol identities, it also requires current precise Gograph
+   evidence that the tagged test still reaches every symbol through exact
+   edges.
 
 A legitimate, reviewed edit to an armed test is accepted with **`rehash`** —
 an explicit, auditable step, never an automatic one. Before accepting drift,
@@ -302,6 +305,13 @@ rows behave exactly as in plain check. `--tags` requires `--run-profile`;
 `--run-profile` cannot combine with `--all`. No flag weakens any existing
 check — the mode only ADDS execution.
 
+New arms persist an explicit `static` or `execute` policy. Use
+`arm ... --execution static|execute` to choose it; when omitted, Rulefloor
+interprets the historical profile behavior once and stores that result.
+`amend ID "sentence" --execution ...` migrates an already armed legacy row
+without changing its profile, test fingerprint, or proof. Untouched legacy
+rows continue to use the compatibility interpretation above.
+
 ## Command reference
 
 Every command takes `--repo PATH` (default `.`).
@@ -314,9 +324,9 @@ Every command takes `--repo PATH` (default `.`).
 | `unarmed` | Rules that still need a test — the work queue. |
 | `unproved` | Armed rows whose red-proof cell is still `-` — the historical proof debt. |
 | `redproofs [--adopt]` | Ratchet status; `--adopt` writes `RED-PROOFS:` onto a legacy ledger at the **measured** count. |
-| `declare "sentence" --id ID [--covers SYMBOLS]` | Append a declared row; raise FLOOR. Optional `--red-proof TEXT`; optional comma-separated covered symbols. |
-| `amend ID "sentence" [--covers SYMBOLS]` | Replace an existing rule sentence and optionally its covered-symbol set. Preserve its ID, binding, proof, hash, FLOOR, and RED-PROOFS; use `--covers=` to clear and refuse a complete no-op. |
-| `arm ID --check "file @ profile" --red-proof TEXT [--covers SYMBOLS]` | Pin the tagged test's hash; set enforced-by; raise FLOOR and RED-PROOFS. Refuses skipped tests. `--red-proof` is **required**; optional `--proof-kind` and `--proof-ref` create a structured proof record. `--covers` sets or replaces the symbol set; omission retains a declaration-time set. |
+| `declare "sentence" --id ID [--covers SYMBOLS]` | Append a declared row; raise FLOOR. Optional `--red-proof TEXT`; stable Gograph IDs in `--covers` opt a future Go binding into exact structural reach. |
+| `amend ID "sentence" [--covers SYMBOLS] [--execution static\|execute]` | Replace an existing rule sentence and optionally its covered-symbol set or persisted execution policy. Preserve its ID, binding, proof, hash, FLOOR, and RED-PROOFS; use `--covers=` to clear and refuse a complete no-op. |
+| `arm ID --check "file @ profile" --red-proof TEXT [--covers SYMBOLS] [--execution static\|execute]` | Pin the tagged test's hash; persist execution policy; set enforced-by; raise FLOOR and RED-PROOFS. Refuses skipped tests. `--red-proof` is **required**; optional `--proof-kind` and `--proof-ref` create a structured proof record. `--covers` sets or replaces the symbol set; omission retains a declaration-time set. |
 | `prove ID --red-proof TEXT [--replace\|--supersede\|--force] [--run]` | Record an observation on an armed row. `--replace` remains limited to a non-proof. `--supersede` replaces a genuine re-watched proof and stores its full fingerprint link. `--force` is the loud exceptional override. `--run` executes one Go binding and writes only after that selected test reports FAIL. |
 | `rehash ID` | Accept a reviewed body change. Refuses a no-op, refuses skipped tests. |
 | `diff ID` | Read-only comparison of the working bound span with the newest Git revision whose extracted fingerprint exactly matches the ledger. It never classifies drift as cosmetic or semantic. |
@@ -395,10 +405,13 @@ failure proves the natural-language rule.
 ## Covered product symbols
 
 `--covers` records the repository's asserted rule-to-product-symbol link. It is
-a comma-separated set, canonicalized into sorted order. Symbol names are
-repository-defined identifiers: Rulefloor validates their representation and
-uniqueness, but does not resolve them, calculate reachability, or claim that a
-test reaches them. Source-graph reach remains a separate review concern.
+a comma-separated set, canonicalized into sorted order. Existing labels without
+`::` remain v0.6-compatible metadata only. Gograph is optional for those
+ledgers: `check`, `arm`, `amend`, and `rehash` do not try to locate it. A set
+made entirely of Gograph stable identities (for example,
+`example.com/product/internal/cart::(*Cart).Total`) opts a Go binding into
+exact structural-reach enforcement. Mixed stable IDs and legacy labels are
+rejected so enforcement cannot be disabled accidentally.
 
 The read path is `rulefloor covers --json`:
 
@@ -412,12 +425,29 @@ Every ledger rule is present; a rule without metadata has `[]`. Human
 `amend ID "unchanged sentence" --covers ...` is the deterministic backfill
 path and does not move the test hash, proof, FLOOR, or RED-PROOFS.
 
+Before writing or checking an exact-reach row, build the repository graph with
+`gograph build . --precise`. Rulefloor invokes Gograph's `identity` and
+`coverage` interfaces; it does not reproduce graph analysis. It accepts only
+persisted, current, complete, precise evidence with typed-complete test-call
+resolution. A missing Gograph binary, stale or partial graph, fallback
+precision, unresolved identity, or ambiguous identity is `cannot_evaluate`,
+never a crash or silent pass. A
+possible-only edge is an evaluated failure, not exact reach. On arm, Rulefloor
+resolves and stores the tagged test's stable identity and refuses a protected
+symbol the test does not already reach exactly.
+
+This detects proof decay: an unchanged, passing tagged test fails when it no
+longer structurally reaches a declared protected symbol. Static reach is not
+runtime branch coverage or semantic proof; it establishes only the exact
+call-graph relationship reported by trusted Gograph evidence.
+
 Backward compatibility determines the storage shape. RULE-FLOOR.md remains a
 six-column table. A canonical base64url JSON token is stored as an HTML-comment
 suffix inside the existing red-proof cell. New Rulefloor separates that token
 from the logical proof before proof counting and fingerprinting. Older v0.3.0
 binaries parse and check the ledger because the row still has six columns; they
-treat the suffix as opaque proof text and do not expose the symbol map. A
+treat the covers and binding metadata suffixes as opaque proof text and do not
+enforce the symbol map or explicit execution policy. A
 seventh table column was rejected because v0.3.0 rejects an altered header.
 
 ## Binary capabilities
@@ -429,7 +459,8 @@ health, or installed Go toolchain state.
 
 Human output concisely lists the running version, machine schemas, supported
 test kinds and execution support, validation modes, proof kinds, ledger
-features, commands, and execution semantics. `rulefloor capabilities --json`
+features, commands, execution semantics, and compiled structural-reach support.
+`rulefloor capabilities --json`
 emits exactly one `rulefloor.capabilities.v1` document containing the same data.
 Its `rulefloor_version` comes from the same runtime version source as
 `rulefloor version --json`.
@@ -437,7 +468,9 @@ Its `rulefloor_version` comes from the same runtime version source as
 The v1 object contains `schema_version`, `rulefloor_version`,
 `machine_interfaces`, per-kind `test_kinds` entries with
 `static_validation`/`execution` booleans, `validation_modes`, `proof_kinds`,
-`ledger_features`, `commands`, and structured `execution_semantics`. Arrays use
+`ledger_features`, `commands`, structured `execution_semantics`, and
+`structural_reach`. The latter describes compiled support and does not inspect
+whether Gograph or a graph is available in the current environment. Arrays use
 the deterministic order shown by the exact conformance fixture in
 [`testdata/machine`](testdata/machine).
 
@@ -476,13 +509,15 @@ Go build tags; whether
 the rule exists and is armed; check kind, file, and declared profile; expected
 and actual 12-character test-body hashes; red-proof presence and, when present,
 the full SHA-256 of its exact canonical ledger cell; static and execution
-status; a stable reason code; and bounded structured diagnostics. Output is one
+status; optional `protected_symbols` and `structural_reach` for an exact-reach
+row; a stable reason code; and bounded structured diagnostics. Output is one
 strict JSON document, diagnostic text is bounded, and no human prose is mixed
 into JSON stdout.
 
 - `static` performs only selected-row integrity checks: existence, armed state,
   check shape and kind, confined regular check file, unique tag, skip/only
-  restrictions, body hash, and red-proof presence. It never executes the test.
+  restrictions, body hash, red-proof presence, and any declared exact
+  protected-symbol reach. It never executes the test.
 - `execute` performs static validation first, then runs a selected Go test with
   explicit `go test` arguments. For legacy compatibility, a `unit` Go row needs
   no `--profile`; another profile requires an exact declared-profile match.
@@ -507,8 +542,10 @@ Stable `evaluation.reason` codes are:
 | `rule_failed` | `fail` | The selected bound test ran and failed. |
 | `hash_mismatch`, `test_restricted`, `red_proof_missing` | `fail` | The selected binding was evaluated and failed static integrity. |
 | `test_skipped` | `fail` or `cannot_evaluate` | A statically prohibited skip is a binding failure; a runtime skip means requested execution could not be evaluated. |
+| `protected_symbol_unreached`, `protected_symbol_possible` | `fail` | Source integrity passed, but a protected symbol is absent from exact test reach or is reached only through possible/uncertain edges. |
 | `invalid_request`, `ledger_invalid`, `rule_not_found`, `rule_unarmed`, `profile_mismatch` | `cannot_evaluate` | The request or selected ledger state could not be evaluated. |
 | `check_file_missing`, `tag_missing`, `tag_ambiguous`, `cannot_parse_test` | `cannot_evaluate` | Source discovery or extraction could not produce one trustworthy binding. |
+| `graph_evidence_unavailable`, `graph_evidence_insufficient`, `symbol_identity_ambiguous` | `cannot_evaluate` | Required Gograph evidence or stable identity cannot be trusted enough to evaluate exact reach. |
 | `execution_unsupported`, `toolchain_unavailable`, `execution_failed`, `context_canceled`, `deadline_exceeded` | `cannot_evaluate` | Requested execution could not be completed reliably. |
 
 Diagnostics use the same reason when applicable; `ledger_unavailable` is the
@@ -517,7 +554,8 @@ specific diagnostic code for an unavailable ledger while the result reason is
 therefore `cannot_evaluate`, never an evaluated failure.
 
 The guarantee is deliberately narrow. Static validation confirms the integrity
-of the selected rule binding and its extracted source fingerprint. Executed
+of the selected rule binding and its extracted source fingerprint and, when the
+row opts in, exact protected-symbol reach from trusted Gograph evidence. Executed
 validation first establishes that static integrity and then runs the supported
 bound test. Neither mode proves the natural-language rule, unrelated code, or
 the repository globally correct. A proof fingerprint identifies recorded proof
@@ -536,11 +574,16 @@ For every **armed** row:
 3. No `.skip`/`.only` modifier (Playwright), no `t.Skip`/`t.Skipf`/
    `t.SkipNow` in the body (Go).
 4. The recomputed body hash equals the ledger hash.
-5. **Legacy `unit` Go rows, plus a selected non-unit `--run-profile`:**
+5. **Exact protected-symbol bindings:** Gograph must provide persisted,
+   current, complete, precise evidence that the stored test identity reaches
+   every stored production identity through exact edges. Possible-only edges
+   fail; unavailable or ambiguous evidence is CANNOT-EVALUATE.
+6. **Rows with persisted execute policy, compatible legacy `unit` Go rows,
+   plus a selected non-unit `--run-profile`:**
    `go test -count=1 -run '^TestXxx$'` runs in the file's package and must
    report `--- PASS`. The bound test executes; the prose rule is not itself an
    executable object.
-6. **Playwright rows, with `--report pw.json`:** the ID must appear in the
+7. **Playwright rows, with `--report pw.json`:** the ID must appear in the
    Playwright JSON report with every result `passed`. Use this in the job
    that runs your e2e suite: `playwright test --reporter=json > pw.json`,
    then `rulefloor check --report pw.json`.
@@ -611,12 +654,12 @@ consuming repo's docs, next to the people who made them — not here, where
 every consumer would inherit one project's conventions as if they were
 the tool's.
 
-Static call-graph reachability, exact-versus-possible edges, census symbols,
-multi-symbol coverage manifests, and an integration `~` convention belong to
-Gograph and the consuming repository's governance gate. Rulefloor deliberately
-does not store or infer those source-graph claims: its ledger remains one rule
-bound to one concrete check span. A repository may run Gograph alongside
-Rulefloor, but neither tool's result is silently treated as the other's proof.
+Rulefloor stores optional stable production-symbol identities and consumes
+Gograph as structural evidence for exact test reach. Gograph remains the graph
+analysis authority: Rulefloor neither duplicates its analysis nor overrides
+missing or uncertain evidence. Census completeness and repository-specific
+integration conventions still belong to consuming-repository governance;
+Rulefloor checks only the symbols explicitly declared on each row.
 
 ## Exit codes
 
@@ -766,6 +809,11 @@ REPAIRED-FIXTURES: <ID>[,<ID>...]        (optional migration audit)
 - `enforced-by`: `playwright` | `go-test` | `vitest` for armed rows; `-`
   for declared.
 - `check`: `<repo-relative file> @ <profile>`, or `NONE` (declared).
+- `rulefloor-binding-v1`: optional canonical base64url JSON metadata in the
+  red-proof cell stores `execution_policy` (`static` or `execute`) and, for an
+  exact-reach Go row, `reachability_policy: "exact"` plus the bound test's
+  Gograph stable identity. Newly armed rows always persist execution policy;
+  rows without this token retain legacy profile compatibility.
 - `red-proof`: `-`, legacy free text, or a canonical
   `[proof-v1 kind=KIND ref=URL] TEXT` record (`ref` is optional). Proof-v1 kinds
   are `manual_observation`, `mutation_observation`, and `ci_reference`;
@@ -780,7 +828,8 @@ REPAIRED-FIXTURES: <ID>[,<ID>...]        (optional migration audit)
   Optional covered symbols are encoded after the logical proof as
   `<!-- rulefloor-covers-v1:<base64url canonical JSON array> -->`. The token is
   validated by `check`, is not counted as proof, and is omitted entirely for an
-  empty symbol set. It does not claim symbol existence or test reachability.
+  empty symbol set. Label-only arrays remain metadata. Stable Gograph identities
+  paired with binding-v1 exact policy are resolved and enforced.
 - `hash`: exactly 12 lowercase hex chars for armed rows; `-` for declared
   rows (enforced both ways).
 - Cells cannot contain `|` or newlines (input validation refuses them).

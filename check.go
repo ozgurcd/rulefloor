@@ -7,10 +7,13 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	checkengine "github.com/ozgurcd/rulefloor/internal/check"
 	"github.com/ozgurcd/rulefloor/internal/extract"
 	"github.com/ozgurcd/rulefloor/internal/ledger"
+	rulemodel "github.com/ozgurcd/rulefloor/internal/model"
+	"github.com/ozgurcd/rulefloor/internal/reach"
 	"github.com/ozgurcd/rulefloor/internal/repository"
 )
 
@@ -88,14 +91,16 @@ func checkOnly(repo, id, runProfile, tags string, stdout io.Writer) error {
 	if !row.Armed() {
 		return failf("refusing: rule %s is not armed", id)
 	}
-	binding, err := ledger.InterpretBinding((*ledger.Row)(row))
+	binding, err := rulemodel.InterpretBinding((*rulemodel.Row)(row))
 	if err != nil {
 		return fatalf("row %s: %v", id, err)
 	}
 	if runProfile != "" && runProfile != binding.Profile {
 		return fatalf("check: --only %s requested profile %q but the row declares %q", id, runProfile, binding.Profile)
 	}
-	problems, err := checkRow(repo, row, rowCheckOptions{runProfile: runProfile, tags: tags})
+	problems, err := checkRow(repo, row, rowCheckOptions{
+		runProfile: runProfile, tags: tags, reachVerifier: newGraphClient(),
+	})
 	if err != nil {
 		return err
 	}
@@ -139,6 +144,7 @@ func checkRepo(repo, reportPath, runProfile, tags string, stdout io.Writer) (int
 		}
 	}
 	armed := 0
+	reachVerifier := newGraphClient()
 	for i := range model.Rows {
 		row := &model.Rows[i]
 		if !row.Armed() {
@@ -148,6 +154,7 @@ func checkRepo(repo, reportPath, runProfile, tags string, stdout io.Writer) (int
 		armed++
 		rowProblems, err := checkRow(repo, row, rowCheckOptions{
 			report: playwrightReport, haveReport: reportPath != "", runProfile: runProfile, tags: tags,
+			reachVerifier: reachVerifier,
 		})
 		if err != nil {
 			return 0, err
@@ -184,14 +191,15 @@ func checkRepo(repo, reportPath, runProfile, tags string, stdout io.Writer) (int
 }
 
 type rowCheckOptions struct {
-	report     map[string][]string
-	haveReport bool
-	runProfile string
-	tags       string
+	report        map[string][]string
+	haveReport    bool
+	runProfile    string
+	tags          string
+	reachVerifier reach.Verifier
 }
 
 func checkRow(repo string, row *Row, options rowCheckOptions) ([]string, error) {
-	binding, err := ledger.InterpretBinding((*ledger.Row)(row))
+	binding, err := rulemodel.InterpretBinding((*rulemodel.Row)(row))
 	if err != nil {
 		return nil, fatalf("row %s: %v", row.ID, err)
 	}
@@ -220,7 +228,7 @@ func checkRow(repo string, row *Row, options rowCheckOptions) ([]string, error) 
 		}
 		return append(problems, fmt.Sprintf("check file %s cannot be read: %v", file, err)), nil
 	}
-	evaluation, err := checkengine.EvaluateSource(extractorRegistry, (*ledger.Row)(row), string(data))
+	evaluation, err := checkengine.EvaluateSource(extractorRegistry, (*rulemodel.Row)(row), string(data))
 	if err != nil {
 		if extract.IsFatal(err) || strings.HasPrefix(err.Error(), "CANNOT-EVALUATE:") {
 			return nil, fatalf("%v", err)
@@ -230,6 +238,24 @@ func checkRow(repo string, row *Row, options rowCheckOptions) ([]string, error) 
 	rowProblems := make([]string, 0, len(evaluation.Issues)+1)
 	for _, issue := range evaluation.Issues {
 		rowProblems = append(rowProblems, issue.Message)
+	}
+	if len(evaluation.Issues) == 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		reachEvaluation, reachErr := checkengine.EvaluateProtectedReach(ctx, options.reachVerifier, root, (*rulemodel.Row)(row))
+		cancel()
+		if reachErr != nil {
+			var evidenceErr *reach.EvidenceError
+			if errors.As(reachErr, &evidenceErr) {
+				if evidenceErr.Kind == reach.ErrorAmbiguous {
+					return nil, fatalf("CANNOT-EVALUATE: ambiguous symbol identity: %s", evidenceErr.Message)
+				}
+				return nil, fatalf("CANNOT-EVALUATE: graph evidence unavailable or insufficient: %s", evidenceErr.Message)
+			}
+			return nil, fatalf("CANNOT-EVALUATE: graph evidence unavailable or insufficient: %v", reachErr)
+		}
+		for _, issue := range reachEvaluation.Issues {
+			rowProblems = append(rowProblems, issue.Message)
+		}
 	}
 	executionProblem, err := executeRowBinding(resolved, binding, evaluation, options)
 	if err != nil {
@@ -242,11 +268,11 @@ func checkRow(repo string, row *Row, options rowCheckOptions) ([]string, error) 
 	return rowProblems, nil
 }
 
-func executeRowBinding(testFile string, binding ledger.Binding, evaluation checkengine.StaticEvaluation, options rowCheckOptions) (string, error) {
+func executeRowBinding(testFile string, binding rulemodel.Binding, evaluation checkengine.StaticEvaluation, options rowCheckOptions) (string, error) {
 	if !checkengine.SupportsExecution(evaluation.Kind) {
 		return "", nil
 	}
-	if binding.Execution == ledger.ExecutionExecute {
+	if binding.Execution == rulemodel.ExecutionExecute {
 		return runGoTest(testFile, evaluation.Ref.FuncName, "", false)
 	}
 	if options.runProfile != "" && binding.Profile == options.runProfile {

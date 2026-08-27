@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Optional exact protected-symbol reach for Go bindings using Gograph stable
+  identities and Gograph's persisted precise coverage evidence. Missing,
+  stale, partial, fallback, or ambiguous evidence fails closed; possible-only
+  reach is not accepted as exact.
+- Gograph remains optional for legacy label-only cover rows; check, arm, amend,
+  and rehash retain their existing behavior when it is absent from PATH.
+- Additive protected-symbol and structural-reach fields in
+  `rulefloor.validation.v1`, plus compiled reach support in
+  `rulefloor.capabilities.v1`.
+
+### Changed
+
+- Newly armed rows persist explicit `static` or `execute` policy independently
+  of profile naming. Untouched ledgers retain the legacy `unit` compatibility
+  interpretation without migration.
+- Binding policy and stable test identity use canonical `rulefloor-binding-v1`
+  metadata inside the existing red-proof cell. RULE-FLOOR.md remains six
+  columns, and existing label-only `covers-v1` rows remain metadata-only.
+
 ## [0.6.0] - 2026-08-25
 
 ### Added

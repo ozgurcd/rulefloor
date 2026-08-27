@@ -20,7 +20,7 @@ func TestSixColumnLedgerWithoutCoveredSymbolsIsByteStable(t *testing.T) {
 	if len(model.Rows[0].CoveredSymbols) != 0 {
 		t.Fatalf("covered symbols = %v, want empty", model.Rows[0].CoveredSymbols)
 	}
-	if got := model.Serialize(); got != data {
+	if got := Serialize(model); got != data {
 		t.Fatalf("legacy six-column ledger changed on round trip\ngot:\n%s\nwant:\n%s", got, data)
 	}
 }
@@ -38,7 +38,7 @@ func TestCoveredSymbolsRoundTripSeparatesProofMetadata(t *testing.T) {
 			RedProof: proofCell, Hash: "abcdef012345", CoveredSymbols: []string{"pkg.Auth", "pkg.Refresh"},
 		}},
 	}
-	serialized := model.Serialize()
+	serialized := Serialize(model)
 	if strings.Count(serialized, "|") == 0 || !strings.Contains(serialized, "<!-- rulefloor-covers-v1:") {
 		t.Fatalf("serialized ledger lacks covers token:\n%s", serialized)
 	}
@@ -67,7 +67,7 @@ func TestCoveredSymbolsOnDeclaredRowRemainUnproved(t *testing.T) {
 			CoveredSymbols: []string{"pkg.Func"},
 		}},
 	}
-	parsed, err := Parse(model.Serialize())
+	parsed, err := Parse(Serialize(model))
 	if err != nil {
 		t.Fatal(err)
 	}

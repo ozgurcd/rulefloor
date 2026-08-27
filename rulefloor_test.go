@@ -591,7 +591,7 @@ func TestProveFlowAndRefusals(t *testing.T) {
 	}
 	// And the new floor has teeth: emptying the just-recorded proof drops
 	// the measurement below the raised header.
-	replaceInFile(t, ledgerFP(repo), "| mutation watched FAIL then restored |", "| - |")
+	setLogicalProof(t, repo, "R-2", "-")
 	if code, out := run2(t, "check", "--repo", repo); code != 1 || !strings.Contains(out, "below RED-PROOFS 2") {
 		t.Fatalf("check after emptying proved cell: exit %d:\n%s", code, out)
 	}
@@ -619,16 +619,14 @@ func TestProveReplaceOnlyOverwritesNonProofs(t *testing.T) {
 	// Now shape a "blocked:" pre-arming cell on R-1 by hand (the ledger is
 	// tool-written, but this fixture simulates a legacy blocked: note that
 	// arm-time recorded on a check that could not yet run).
-	replaceInFile(t, ledgerFP(repo), "| R-1 | Refresh token is single use. | playwright | e2e/login.spec.ts @ chromium | "+fixtureProof+" |",
-		"| R-1 | Refresh token is single use. | playwright | e2e/login.spec.ts @ chromium | blocked: TestX is go:build integration + live Postgres |")
+	setLogicalProof(t, repo, "R-1", "blocked: TestX is go:build integration + live Postgres")
 	// The blocked: note is a non-proof: --replace overwrites it.
 	out := mustRun(t, "prove", "R-1", "--red-proof", "mutation red-proved 2026-08-18: guard inverted, watched FAIL, restored", "--replace", "--repo", repo)
 	if !strings.Contains(out, "replaced non-proof") || !strings.Contains(out, "blocked:") {
 		t.Fatalf("--replace over a blocked: note:\n%s", out)
 	}
 	// And a dateless cell is also a non-proof: shape one, replace it.
-	replaceInFile(t, ledgerFP(repo), "| mutation red-proved 2026-08-18: guard inverted, watched FAIL, restored |",
-		"| a note with no date at all |")
+	setLogicalProof(t, repo, "R-1", "a note with no date at all")
 	out = mustRun(t, "prove", "R-1", "--red-proof", "mutation red-proved 2026-08-18: second real proof", "--replace", "--repo", repo)
 	if !strings.Contains(out, "replaced non-proof") {
 		t.Fatalf("--replace over a dateless cell:\n%s", out)

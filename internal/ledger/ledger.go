@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"fmt"
+	"github.com/ozgurcd/rulefloor/internal/model"
 	"github.com/ozgurcd/rulefloor/internal/repository"
 	"os"
 	"path/filepath"
@@ -20,75 +21,10 @@ var (
 	sepCellRe = regexp.MustCompile(`^:?-{3,}:?$`)
 )
 
-type Row struct {
-	ID             string
-	Rule           string
-	EnforcedBy     string
-	Check          string
-	RedProof       string
-	Hash           string
-	CoveredSymbols []string
-}
-
-func (r *Row) Armed() bool { return r.Check != "NONE" }
-
-type Ledger struct {
-	Floor            int
-	Rows             []Row
-	RedProofs        int
-	HasRedProofs     bool
-	RepairedFixtures []string
-}
+type Row = model.Row
+type Ledger = model.Ledger
 
 func Path(repo string) string { return filepath.Join(repo, Filename) }
-
-func (l *Ledger) Find(id string) *Row {
-	for i := range l.Rows {
-		if l.Rows[i].ID == id {
-			return &l.Rows[i]
-		}
-	}
-	return nil
-}
-
-func (l *Ledger) IsRepairedFixture(id string) bool {
-	for _, repaired := range l.RepairedFixtures {
-		if repaired == id {
-			return true
-		}
-	}
-	return false
-}
-
-func (l *Ledger) EffectiveCount() int { return len(l.Rows) + len(l.RepairedFixtures) }
-
-func (l *Ledger) RaiseFloor(n int) {
-	if n > l.Floor {
-		l.Floor = n
-	}
-}
-
-func (l *Ledger) MeasuredRedProofs() int {
-	n := 0
-	for _, r := range l.Rows {
-		if r.Armed() && r.RedProof != "-" {
-			n++
-		}
-	}
-	return n
-}
-
-func (l *Ledger) MaintainRedProofs() {
-	m := l.MeasuredRedProofs()
-	if !l.HasRedProofs {
-		l.RedProofs = m
-		l.HasRedProofs = true
-		return
-	}
-	if m > l.RedProofs {
-		l.RedProofs = m
-	}
-}
 
 func Load(repo string) (*Ledger, error) {
 	p := Path(repo)
@@ -121,13 +57,13 @@ func Save(repo string, l *Ledger) error {
 	if err != nil {
 		return fmt.Errorf("cannot write %s: %v", p, err)
 	}
-	if err := os.WriteFile(resolved, []byte(l.Serialize()), 0o644); err != nil {
+	if err := os.WriteFile(resolved, []byte(Serialize(l)), 0o644); err != nil {
 		return fmt.Errorf("cannot write %s: %v", p, err)
 	}
 	return nil
 }
 
-func (l *Ledger) Serialize() string {
+func Serialize(l *Ledger) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "FLOOR: %d\n", l.Floor)
 	if l.HasRedProofs {
@@ -141,7 +77,8 @@ func (l *Ledger) Serialize() string {
 	fmt.Fprintf(&b, "|%s\n", strings.Repeat("---|", len(headerCells)))
 	for _, r := range l.Rows {
 		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s |\n",
-			r.ID, r.Rule, r.EnforcedBy, r.Check, joinProofAndCoveredSymbols(r.RedProof, r.CoveredSymbols), r.Hash)
+			r.ID, r.Rule, r.EnforcedBy, r.Check,
+			joinProofAndCoveredSymbols(joinProofAndBindingMetadata(r.RedProof, r), r.CoveredSymbols), r.Hash)
 	}
 	return b.String()
 }
@@ -233,13 +170,20 @@ func Parse(data string) (*Ledger, error) {
 					return nil, fmt.Errorf("line %d: missing field %q", ln, headerCells[j])
 				}
 			}
-			proof, coveredSymbols, err := splitProofAndCoveredSymbols(cells[4])
+			proofWithBinding, coveredSymbols, err := splitProofAndCoveredSymbols(cells[4])
 			if err != nil {
 				return nil, fmt.Errorf("line %d: invalid covered-symbol metadata: %v", ln, err)
+			}
+			proof, bindingMetadata, err := splitProofAndBindingMetadata(proofWithBinding)
+			if err != nil {
+				return nil, fmt.Errorf("line %d: invalid binding metadata: %v", ln, err)
 			}
 			r := Row{
 				ID: cells[0], Rule: cells[1], EnforcedBy: cells[2], Check: cells[3],
 				RedProof: proof, Hash: cells[5], CoveredSymbols: coveredSymbols,
+			}
+			if err := applyAndValidateBindingMetadata(&r, bindingMetadata); err != nil {
+				return nil, fmt.Errorf("line %d: invalid binding metadata: %v", ln, err)
 			}
 			if !ValidID(r.ID) {
 				return nil, fmt.Errorf("line %d: invalid rule ID %q", ln, r.ID)
@@ -286,21 +230,7 @@ func splitRowLine(line string) ([]string, error) {
 	return out, nil
 }
 
-func SplitCheck(spec string) (file, profile string, err error) {
-	if strings.Count(spec, " @ ") != 1 {
-		return "", "", fmt.Errorf("check %q must be \"<file> @ <profile>\"", spec)
-	}
-	file, profile, _ = strings.Cut(spec, " @ ")
-	file = strings.TrimSpace(file)
-	profile = strings.TrimSpace(profile)
-	if file == "" || profile == "" {
-		return "", "", fmt.Errorf("check %q must be \"<file> @ <profile>\"", spec)
-	}
-	if !filepath.IsLocal(file) {
-		return "", "", fmt.Errorf("check file %q must be a relative path inside the repo", file)
-	}
-	return file, profile, nil
-}
+func SplitCheck(spec string) (file, profile string, err error) { return model.SplitCheck(spec) }
 
 func ValidID(id string) bool { return idRe.MatchString(id) }
 

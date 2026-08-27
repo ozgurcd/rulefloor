@@ -100,24 +100,37 @@ func newLegacyRepo(t *testing.T) string {
 	addPWTest(t, repo, "R-2")
 	mustRun(t, "declare", "Second rule.", "--id", "R-2", "--repo", repo)
 	mustRun(t, "arm", "R-2", "--check", "e2e/login.spec.ts @ chromium", "--red-proof", fixtureProof, "--repo", repo)
-	// Hand-shape into the legacy form: R-2 unproved, no header line.
-	data, err := os.ReadFile(ledgerFP(repo))
+	// Hand-shape into the legacy form: R-2 unproved, no explicit binding
+	// metadata, and no RED-PROOFS header.
+	model, err := loadLedger(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := string(data)
-	s = strings.Replace(s, "| R-2 | Second rule. | playwright | e2e/login.spec.ts @ chromium | "+fixtureProof+" |",
-		"| R-2 | Second rule. | playwright | e2e/login.spec.ts @ chromium | - |", 1)
-	i := strings.Index(s, "RED-PROOFS: ")
-	if i < 0 {
-		t.Fatalf("expected a RED-PROOFS line to strip:\n%s", s)
-	}
-	nl := strings.IndexByte(s[i:], '\n')
-	s = s[:i] + s[i+nl+1:]
-	if err := os.WriteFile(ledgerFP(repo), []byte(s), 0o644); err != nil {
+	row := model.find("R-2")
+	row.RedProof = "-"
+	row.ExecutionPolicy = ""
+	model.HasRedProofs = false
+	model.RedProofs = 0
+	if err := saveLedger(repo, model); err != nil {
 		t.Fatal(err)
 	}
 	return repo
+}
+
+func setLogicalProof(t *testing.T, repo, id, proof string) {
+	t.Helper()
+	model, err := loadLedger(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := model.find(id)
+	if row == nil {
+		t.Fatalf("missing fixture row %s", id)
+	}
+	row.RedProof = proof
+	if err := saveLedger(repo, model); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func specPath(repo string) string { return filepath.Join(repo, "e2e", "login.spec.ts") }
@@ -264,7 +277,7 @@ func TestFixtureTable(t *testing.T) {
 		{
 			name: "red-proof emptied on a proven row",
 			prep: func(t *testing.T, repo string) {
-				replaceInFile(t, ledgerFP(repo), "| "+fixtureProof+" |", "| - |")
+				setLogicalProof(t, repo, "R-1", "-")
 			},
 			wantCode: 1,
 			wantMsg:  "below RED-PROOFS",

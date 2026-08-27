@@ -38,7 +38,7 @@ func saveLedger(repo string, model *Ledger) error {
 	return nil
 }
 
-func (l *Ledger) serialize() string { return (*ledger.Ledger)(l).Serialize() }
+func (l *Ledger) serialize() string { return ledger.Serialize((*ledger.Ledger)(l)) }
 
 func parseLedger(data string) (*Ledger, error) {
 	model, err := ledger.Parse(data)

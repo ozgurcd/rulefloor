@@ -20,9 +20,10 @@ machine schemas: rulefloor.version.v1, rulefloor.validation.v1, rulefloor.capabi
 test kinds: go-test (static, execute); playwright (static); vitest (static)
 validation modes: static, execute
 proof kinds: legacy_manual, manual_observation, mutation_observation, ci_reference
-ledger features: FLOOR, RED-PROOFS, six-column-ledger, proof-v1, covers-v1, REPAIRED-FIXTURES
+ledger features: FLOOR, RED-PROOFS, six-column-ledger, proof-v1, covers-v1, binding-v1, exact-symbol-reach, REPAIRED-FIXTURES
+structural reach: gograph exact stable IDs for go-test (possible is insufficient)
 commands: amend, arm, capabilities, check, covers, declare, diff, help, init, list, prove, redproofs, rehash, repair-fixture-row, show, unarmed, unproved, validate, version
-execution: support depends on test kind; static never executes; execute never falls back to static
+execution: persisted policy; legacy profiles compatible; static never executes; execute never falls back to static
 `
 	if stdout != expected {
 		t.Fatalf("human capabilities changed\nactual:\n%s\nexpected:\n%s", stdout, expected)

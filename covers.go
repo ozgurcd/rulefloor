@@ -22,7 +22,7 @@ func cmdCovers(repo string, jsonOutput bool, stdout io.Writer) error {
 	}
 	result := coversResult{
 		SchemaVersion: coversSchemaVersion,
-		Rules:         (*ledger.Ledger)(model).CoveredSymbolsByRule(),
+		Rules:         ledger.CoveredSymbolsByRule((*ledger.Ledger)(model)),
 	}
 	if jsonOutput {
 		if err := writeJSON(stdout, result); err != nil {

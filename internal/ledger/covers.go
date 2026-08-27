@@ -48,7 +48,7 @@ func ParseCoveredSymbols(value string) ([]string, error) {
 
 // CoveredSymbolsByRule returns every rule ID, including rules with an empty
 // symbol set. The returned slices are detached from the ledger model.
-func (l *Ledger) CoveredSymbolsByRule() map[string][]string {
+func CoveredSymbolsByRule(l *Ledger) map[string][]string {
 	rules := make(map[string][]string, len(l.Rows))
 	for _, row := range l.Rows {
 		rules[row.ID] = append([]string{}, row.CoveredSymbols...)

@@ -13,6 +13,7 @@ import (
 	checkengine "github.com/ozgurcd/rulefloor/internal/check"
 	"github.com/ozgurcd/rulefloor/internal/extract"
 	"github.com/ozgurcd/rulefloor/internal/ledger"
+	reachevidence "github.com/ozgurcd/rulefloor/internal/reach"
 	"github.com/ozgurcd/rulefloor/internal/repository"
 )
 
@@ -105,6 +106,7 @@ type Rule struct {
 	RedProofStatus   RedProofStatus `json:"red_proof_status"`
 	TestFingerprint  Fingerprint    `json:"test_fingerprint"`
 	ProofFingerprint *string        `json:"proof_fingerprint,omitempty"`
+	ProtectedSymbols []string       `json:"protected_symbols,omitempty"`
 }
 
 type Execution struct {
@@ -120,12 +122,25 @@ type Diagnostic struct {
 	Test    string `json:"test,omitempty"`
 }
 
+type ProtectedSymbol struct {
+	StableID   string `json:"stable_id"`
+	Resolution string `json:"resolution"`
+}
+
+type StructuralReach struct {
+	Required   bool              `json:"required"`
+	Status     Status            `json:"status"`
+	TestSymbol string            `json:"test_symbol"`
+	Symbols    []ProtectedSymbol `json:"symbols"`
+}
+
 type Evaluation struct {
-	Outcome         Outcome      `json:"outcome"`
-	StaticIntegrity Status       `json:"static_integrity"`
-	Execution       Execution    `json:"execution"`
-	Reason          string       `json:"reason"`
-	Diagnostics     []Diagnostic `json:"diagnostics"`
+	Outcome         Outcome          `json:"outcome"`
+	StaticIntegrity Status           `json:"static_integrity"`
+	Execution       Execution        `json:"execution"`
+	Reason          string           `json:"reason"`
+	Diagnostics     []Diagnostic     `json:"diagnostics"`
+	StructuralReach *StructuralReach `json:"structural_reach,omitempty"`
 }
 
 type Service struct {
@@ -133,6 +148,7 @@ type Service struct {
 	now      func() time.Time
 	runner   checkengine.CommandRunner
 	registry *extract.Registry
+	reach    reachevidence.Verifier
 }
 
 func NewService(version string) Service {
@@ -141,6 +157,12 @@ func NewService(version string) Service {
 
 func NewServiceWith(version string, now func() time.Time, runner checkengine.CommandRunner) Service {
 	return Service{version: version, now: now, runner: runner, registry: extract.DefaultRegistry()}
+}
+
+func NewServiceWithReach(version string, now func() time.Time, runner checkengine.CommandRunner, verifier reachevidence.Verifier) Service {
+	service := NewServiceWith(version, now, runner)
+	service.reach = verifier
+	return service
 }
 
 func (s Service) InvalidResult(request Request, message string) Result {
@@ -207,6 +229,13 @@ func (s Service) Validate(ctx context.Context, request Request) Result {
 	declaredProfile := binding.Profile
 	result.Rule.CheckFile = file
 	result.Rule.DeclaredProfile = declaredProfile
+	if row.ReachabilityPolicy != "" {
+		result.Rule.ProtectedSymbols = append([]string{}, row.CoveredSymbols...)
+		result.Evaluation.StructuralReach = &StructuralReach{
+			Required: true, Status: StatusNotPerformed, TestSymbol: row.TestSymbol,
+			Symbols: make([]ProtectedSymbol, 0, len(row.CoveredSymbols)),
+		}
+	}
 	result.Rule.TestFingerprint.Expected = row.Hash
 	proof, err := ledger.ParseProof(row.RedProof)
 	if err != nil {
@@ -263,8 +292,31 @@ func (s Service) Validate(ctx context.Context, request Request) Result {
 	if result.Rule.RedProofStatus != RedProofPresent {
 		return s.staticFailure(result, "red_proof_missing", "armed rule has no red-proof text", file, static.Ref.FuncName)
 	}
-
 	result.Evaluation.StaticIntegrity = StatusPass
+	if result.Evaluation.StructuralReach != nil {
+		reachResult, reachErr := checkengine.EvaluateProtectedReach(ctx, s.reach, root, row)
+		if reachErr != nil {
+			var evidenceErr *reachevidence.EvidenceError
+			reason := "graph_evidence_unavailable"
+			if errors.As(reachErr, &evidenceErr) {
+				reason = string(evidenceErr.Kind)
+			}
+			result.Evaluation.StructuralReach.Status = StatusCannotEvaluate
+			return s.cannotEvaluateWith(result, reason, Diagnostic{Code: reason, Message: checkengine.BoundedMessage(reachErr.Error()), Path: file, Test: static.Ref.FuncName})
+		}
+		for _, symbol := range reachResult.Symbols {
+			result.Evaluation.StructuralReach.Symbols = append(result.Evaluation.StructuralReach.Symbols, ProtectedSymbol{
+				StableID: symbol.StableID, Resolution: string(symbol.Resolution),
+			})
+		}
+		if len(reachResult.Issues) > 0 {
+			result.Evaluation.StructuralReach.Status = StatusFail
+			issue := reachResult.Issues[0]
+			return s.structuralFailure(result, issue.Code, issue.Message, file, static.Ref.FuncName)
+		}
+		result.Evaluation.StructuralReach.Status = StatusPass
+	}
+
 	if request.Mode == ModeStatic {
 		result.Evaluation.Outcome = OutcomePass
 		result.Evaluation.Reason = "rule_passed"
@@ -364,6 +416,13 @@ func (s Service) cannotEvaluateWith(result Result, reason string, diagnostic Dia
 func (s Service) staticFailure(result Result, reason, message, path, test string) Result {
 	result.Evaluation.Outcome = OutcomeFail
 	result.Evaluation.StaticIntegrity = StatusFail
+	result.Evaluation.Reason = reason
+	result.Evaluation.Diagnostics = append(result.Evaluation.Diagnostics, Diagnostic{Code: reason, Message: message, Path: path, Test: test})
+	return s.finish(result)
+}
+
+func (s Service) structuralFailure(result Result, reason, message, path, test string) Result {
+	result.Evaluation.Outcome = OutcomeFail
 	result.Evaluation.Reason = reason
 	result.Evaluation.Diagnostics = append(result.Evaluation.Diagnostics, Diagnostic{Code: reason, Message: message, Path: path, Test: test})
 	return s.finish(result)

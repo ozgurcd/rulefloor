@@ -9,6 +9,7 @@ import (
 	"time"
 
 	checkengine "github.com/ozgurcd/rulefloor/internal/check"
+	"github.com/ozgurcd/rulefloor/internal/reach"
 	machine "github.com/ozgurcd/rulefloor/internal/validation"
 )
 
@@ -69,14 +70,15 @@ type validationService struct {
 	version string
 	now     func() time.Time
 	runner  validationCommandRunner
+	reach   reach.Verifier
 }
 
 func newValidationService() validationService {
-	return validationService{version: version, now: time.Now, runner: execValidationCommandRunner{}}
+	return validationService{version: version, now: time.Now, runner: execValidationCommandRunner{}, reach: newGraphClient()}
 }
 
 func (s validationService) Validate(ctx context.Context, request ValidationRequest) ValidationResult {
-	return machine.NewServiceWith(s.version, s.now, s.runner).Validate(ctx, request)
+	return machine.NewServiceWithReach(s.version, s.now, s.runner, s.reach).Validate(ctx, request)
 }
 
 func writeJSON(writer io.Writer, value any) error {

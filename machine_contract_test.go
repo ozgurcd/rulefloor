@@ -57,6 +57,35 @@ func TestMachineV1GoldenDocuments(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "validation protected reach",
+			file: "rulefloor.validation.v1.protected.golden.json",
+			value: machine.Result{
+				SchemaVersion:    machine.SchemaVersion,
+				Command:          "validate",
+				RulefloorVersion: "dev",
+				GeneratedAt:      "2026-08-21T12:00:00Z",
+				Repository: machine.Repository{
+					Root: "/repo", LedgerPath: "/repo/RULE-FLOOR.md",
+					LedgerFingerprint: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				},
+				Request: machine.RequestView{RuleID: "MACHINE-1", Mode: "static", Profile: ""},
+				Rule: machine.Rule{
+					Exists: true, Armed: true, EnforcedBy: "go-test", CheckFile: "machine_test.go", DeclaredProfile: "unit",
+					RedProofStatus:   machine.RedProofPresent,
+					TestFingerprint:  machine.Fingerprint{Expected: "abcdef012345", Actual: "abcdef012345"},
+					ProofFingerprint: &proofFingerprint, ProtectedSymbols: []string{"example.com/product::Guard"},
+				},
+				Evaluation: machine.Evaluation{
+					Outcome: machine.OutcomePass, StaticIntegrity: machine.StatusPass,
+					Execution: machine.Execution{Status: machine.StatusNotRequested}, Reason: "rule_passed", Diagnostics: []machine.Diagnostic{},
+					StructuralReach: &machine.StructuralReach{
+						Required: true, Status: machine.StatusPass, TestSymbol: "example.com/product::TestGuard",
+						Symbols: []machine.ProtectedSymbol{{StableID: "example.com/product::Guard", Resolution: "exact"}},
+					},
+				},
+			},
+		},
 	}
 
 	for _, test := range tests {

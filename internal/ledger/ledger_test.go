@@ -12,7 +12,7 @@ func TestParseSerializeWithRepairedFixtureAudit(t *testing.T) {
 		RepairedFixtures: []string{"FIXTURE-1"},
 		Rows:             []Row{{ID: "REAL-1", Rule: "A real invariant.", EnforcedBy: "-", Check: "NONE", RedProof: "-", Hash: "-"}},
 	}
-	parsed, err := Parse(model.Serialize())
+	parsed, err := Parse(Serialize(model))
 	if err != nil {
 		t.Fatal(err)
 	}

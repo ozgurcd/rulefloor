@@ -14,6 +14,7 @@ import (
 
 	"github.com/ozgurcd/rulefloor/internal/extract"
 	"github.com/ozgurcd/rulefloor/internal/ledger"
+	"github.com/ozgurcd/rulefloor/internal/model"
 	"github.com/ozgurcd/rulefloor/internal/repository"
 )
 
@@ -23,14 +24,14 @@ type Issue struct {
 }
 
 type StaticEvaluation struct {
-	Binding ledger.Binding
+	Binding model.Binding
 	Kind    extract.Kind
 	Ref     *extract.Ref
 	Issues  []Issue
 }
 
-func EvaluateSource(registry *extract.Registry, row *ledger.Row, source string) (StaticEvaluation, error) {
-	binding, err := ledger.InterpretBinding(row)
+func EvaluateSource(registry *extract.Registry, row *model.Row, source string) (StaticEvaluation, error) {
+	binding, err := model.InterpretBinding(row)
 	if err != nil {
 		return StaticEvaluation{}, err
 	}
@@ -70,11 +71,11 @@ func EvaluateSource(registry *extract.Registry, row *ledger.Row, source string) 
 
 func SupportsExecution(kind extract.Kind) bool { return kind == extract.KindGoTest }
 
-func ValidateExecutionProfile(binding ledger.Binding, requested string) error {
+func ValidateExecutionProfile(binding model.Binding, requested string) error {
 	if requested != "" && requested != binding.Profile {
 		return fmt.Errorf("requested profile %q does not match declared profile %q", requested, binding.Profile)
 	}
-	if binding.Execution == ledger.ExecutionStatic && requested == "" {
+	if binding.Execution == model.ExecutionStatic && requested == "" {
 		return fmt.Errorf("execute mode requires --profile %s", binding.Profile)
 	}
 	return nil
