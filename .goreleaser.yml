@@ -1,0 +1,37 @@
+version: 2
+project_name: rulefloor
+
+gomod:
+  proxy: true
+
+builds:
+  - id: rulefloor
+    main: .
+    binary: rulefloor
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version=v{{ .Version }}
+
+snapshot:
+  version_template: >-
+    {{- if or (eq .Summary .Tag) (eq .Summary (printf "%s-dirty" .Tag)) -}}
+    {{ .Version }}
+    {{- else -}}
+    {{ incpatch .Version }}-0.{{ replace (replace (replace (replace .CommitDate "-" "") ":" "") "T" "") "Z" "" }}-{{ .ShortCommit }}
+    {{- end -}}
+    {{- if .IsGitDirty }}+dirty{{ end -}}
+
+archives:
+  - formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt

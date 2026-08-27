@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"time"
 
 	checkengine "github.com/ozgurcd/rulefloor/internal/check"
@@ -64,8 +65,39 @@ type Request struct {
 }
 
 type VersionResult struct {
-	SchemaVersion string `json:"schema_version"`
-	Version       string `json:"version"`
+	SchemaVersion       string `json:"schema_version"`
+	Version             string `json:"version"`
+	ToolchainVersion    string `json:"toolchain_version"`
+	VersionDisagreement bool   `json:"version_disagreement,omitzero"`
+}
+
+// RuntimeVersionResult reports the legacy linker stamp alongside the main
+// module version embedded by the Go toolchain.
+func RuntimeVersionResult(stamp string) VersionResult {
+	toolchainVersion := "(unknown)"
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
+		toolchainVersion = info.Main.Version
+	}
+	return versionResult(stamp, toolchainVersion)
+}
+
+func versionResult(stamp, toolchainVersion string) VersionResult {
+	return VersionResult{
+		SchemaVersion:       VersionSchemaVersion,
+		Version:             stamp,
+		ToolchainVersion:    toolchainVersion,
+		VersionDisagreement: versionsDisagree(stamp, toolchainVersion),
+	}
+}
+
+func versionsDisagree(stamp, toolchainVersion string) bool {
+	if toolchainVersion == "(unknown)" {
+		return false
+	}
+	if stamp == "dev" && toolchainVersion == "(devel)" {
+		return false
+	}
+	return stamp != toolchainVersion
 }
 
 type Result struct {

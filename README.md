@@ -73,6 +73,12 @@ unavailable because it would violate the ledger ratchet.
 
 ## Install
 
+Published releases include checksum-addressed archives for Linux and macOS on
+amd64 and arm64. Download the archive for your platform from the release page,
+verify it against `checksums.txt`, then place `rulefloor` on `PATH`. These are
+the canonical release binaries; they are built with `CGO_ENABLED=0` from the
+tagged module version.
+
 Homebrew:
 
 ```bash
@@ -97,7 +103,10 @@ Or with Go:
 go install github.com/ozgurcd/rulefloor@latest
 ```
 
-Or build from source. **Requires Go 1.27.0 or newer** — the module's
+Or build from source. A source build is not a shipped release binary even when
+a builder supplies a release-looking linker stamp: check `version --json` and
+expect `toolchain_version` to reveal `(devel)` when the Go toolchain has no
+module release identity. **Requires Go 1.27.0 or newer** — the module's
 `go` directive is `1.27.0`, the official baseline. A toolchain below it that
 cannot fetch Go 1.27 through `GOTOOLCHAIN=auto` will fail to build the tool,
 deliberately: an under-floor build environment should fail loudly, not
@@ -486,8 +495,9 @@ test kinds and execution support, validation modes, proof kinds, ledger
 features, commands, execution semantics, and compiled structural-reach support.
 `rulefloor capabilities --json`
 emits exactly one `rulefloor.capabilities.v1` document containing the same data.
-Its `rulefloor_version` comes from the same runtime version source as
-`rulefloor version --json`.
+Its `rulefloor_version` matches the backward-compatible `version` field from
+`rulefloor version --json`. Binary provenance details live only in the version
+document.
 
 The v1 object contains `schema_version`, `rulefloor_version`,
 `machine_interfaces`, per-kind `test_kinds` entries with
@@ -508,7 +518,7 @@ Repository status remains the responsibility of `check` and `validate`.
 `rulefloor version --json` writes one JSON document to stdout:
 
 ```json
-{"schema_version":"rulefloor.version.v1","version":"v0.7.0"}
+{"schema_version":"rulefloor.version.v1","version":"v0.8.0","toolchain_version":"v0.8.0"}
 ```
 
 `rulefloor.version.v1`, `rulefloor.validation.v1`,
@@ -516,8 +526,24 @@ Repository status remains the responsibility of `check` and `validate`.
 Within v1, required fields, field meanings, outcome/reason meanings, and exit
 mapping will not be removed or renamed. Compatible releases may add optional
 fields. Consumers must reject an unknown `schema_version` rather than guessing.
-The version value is the normal release-time `main.version` stamp (`dev` in an
-unstamped development build); Rulefloor does not invent a release version.
+The existing `version` value remains the release-time `main.version` stamp for
+compatibility. `toolchain_version` is the main-module version embedded by the
+Go toolchain and read with `debug.ReadBuildInfo()`. An unversioned source or
+tarball build reports `(devel)`. When the two claims differ, the document also
+contains `"version_disagreement":true`; that field is absent when they agree.
+`dev` and `(devel)` are the equivalent honest development state.
+
+Official release archives are built from the tagged module through GoReleaser's
+module-proxy mode and stamp `v{{ .Version }}`, so both values name the same tag.
+The release also publishes `checksums.txt`. Verify that checksum separately:
+embedded build information identifies the module version but does not validate
+the bytes of the file carrying it.
+
+Build information cannot establish who ran a build, whether the release tag is
+trusted, whether a downloaded binary matches a published checksum, or whether
+the local repository and dependencies are the ones an operator intended. It
+also cannot turn a source-archive build into a tagged module build: `(devel)` is
+reported rather than guessed away.
 Exact v1 conformance documents are kept in [`testdata/machine`](testdata/machine).
 
 `rulefloor validate RULE-ID --repo PATH --mode static|execute [--profile NAME] [--tags TAGS] --json`
@@ -766,6 +792,9 @@ business-truth oracle, or a claim that every dependency of a test is unchanged.
   commits, protected branches, and repository review are the trust boundary for
   who changed a ledger, whether `rehash` was justified, and whether proof
   replacement was appropriately reviewed.
+- `version --json` exposes both the legacy builder stamp and Go's embedded main
+  module version. Agreement is useful provenance, not a signature or checksum;
+  verify shipped binaries against the release's `checksums.txt`.
 - `prove --run` establishes only that the selected Go test reported failure in
   that invocation. It cannot establish why the test failed, whether a mutation
   was appropriate, or whether the human proof text is truthful.

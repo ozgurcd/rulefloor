@@ -20,8 +20,9 @@ func TestMachineV1GoldenDocuments(t *testing.T) {
 			name: "version",
 			file: "rulefloor.version.v1.golden.json",
 			value: machine.VersionResult{
-				SchemaVersion: machine.VersionSchemaVersion,
-				Version:       "dev",
+				SchemaVersion:    machine.VersionSchemaVersion,
+				Version:          "dev",
+				ToolchainVersion: "(devel)",
 			},
 		},
 		{

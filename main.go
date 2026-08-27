@@ -356,7 +356,7 @@ func dispatch(args []string, stdout io.Writer) error {
 
 func dispatchVersion(args []string, stdout io.Writer) error {
 	if len(args) == 1 && args[0] == "--json" {
-		if err := writeJSON(stdout, VersionResult{SchemaVersion: versionSchemaVersion, Version: version}); err != nil {
+		if err := writeJSON(stdout, runtimeVersionResult()); err != nil {
 			return fatalf("write version JSON: %v", err)
 		}
 		return nil

@@ -52,12 +52,6 @@ explicitly selected.
   compiled Gograph structural-reach support.
 - `rulefloor.version.v1` and `rulefloor.covers.v1` are unchanged.
 
-## Compatibility acceptance
-
-Two real legacy-label consumer ledgers totaling 221 armed rows were checked
-without modification. Both ledger files remained byte-identical, including
-every row hash, proof, `FLOOR`, and `RED-PROOFS` value.
-
 ## Verification
 
 The release gate includes Rulefloor self-check, `go test ./...`, `go vet`,

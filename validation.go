@@ -53,6 +53,11 @@ const (
 
 type ValidationRequest = machine.Request
 type VersionResult = machine.VersionResult
+
+func runtimeVersionResult() VersionResult {
+	return machine.RuntimeVersionResult(version)
+}
+
 type ValidationResult = machine.Result
 type ValidationRepository = machine.Repository
 type ValidationRequestView = machine.RequestView

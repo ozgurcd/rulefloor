@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Additive Go-toolchain module provenance in `rulefloor.version.v1`, including
+  an explicit disagreement signal when a linker stamp conflicts with
+  `debug.ReadBuildInfo()`.
+- GoReleaser archives for Linux and macOS on amd64 and arm64, built with
+  `CGO_ENABLED=0`, plus `checksums.txt` and a tag-triggered release workflow.
+
+### Changed
+
+- Release builds use the tagged module through GoReleaser's verifiable
+  module-proxy mode instead of treating a caller-supplied linker value as the
+  only version evidence.
+
 ## [0.7.0] - 2026-08-27
 
 ### Added
@@ -30,10 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Compatibility
 
-- Existing six-column ledgers require no migration. Read-only acceptance checks
-  passed against two real legacy-label ledgers totaling 221 armed rows; both
-  ledger files remained byte-identical, including every row hash, `FLOOR`, and
-  `RED-PROOFS` value.
+- Existing six-column ledgers require no migration.
 - `rulefloor.version.v1`, `rulefloor.validation.v1`,
   `rulefloor.capabilities.v1`, and `rulefloor.covers.v1` remain stable v1
   contracts. New validation and capability fields are additive.
