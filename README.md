@@ -10,7 +10,8 @@ armed rule is pinned to the exact source span of its tagged test, and `check`
 fails when that binding changes, skips, or disappears.
 
 One file at your repo root — `RULE-FLOOR.md` — human-readable, diff-friendly,
-and written **only** by this tool. Stdlib-only Go, no dependencies.
+and written **only** by this tool. Rulefloor is a dependency-free Go binary;
+Gograph is optional and used only by rows that opt into exact structural reach.
 
 ```
 $ rulefloor check
@@ -76,6 +77,14 @@ Homebrew:
 
 ```bash
 brew install ozgurcd/tap/rulefloor
+```
+
+Upgrade an existing tap installation and confirm the running release:
+
+```bash
+brew update
+brew upgrade ozgurcd/tap/rulefloor
+rulefloor version --json
 ```
 
 Releases and per-version changes are recorded in
@@ -436,6 +445,21 @@ possible-only edge is an evaluated failure, not exact reach. On arm, Rulefloor
 resolves and stores the tagged test's stable identity and refuses a protected
 symbol the test does not already reach exactly.
 
+A typical opt-in workflow is:
+
+```bash
+gograph build . --precise
+gograph identity 'example.com/product/internal/cart::(*Cart).Total' --json
+rulefloor amend CART-1 "An emptied cart shows a zero total." \
+  --covers 'example.com/product/internal/cart::(*Cart).Total'
+rulefloor check --only CART-1
+```
+
+Use the canonical `stable_id` returned by Gograph. Display names and file/line
+positions are not stable identities. Rebuild the precise graph after source
+changes and before `arm`, protected-symbol `amend`, `rehash`, `check`, or
+`validate` evaluates an exact-reach row.
+
 This detects proof decay: an unchanged, passing tagged test fails when it no
 longer structurally reaches a declared protected symbol. Static reach is not
 runtime branch coverage or semantic proof; it establishes only the exact
@@ -484,7 +508,7 @@ Repository status remains the responsibility of `check` and `validate`.
 `rulefloor version --json` writes one JSON document to stdout:
 
 ```json
-{"schema_version":"rulefloor.version.v1","version":"v0.6.0"}
+{"schema_version":"rulefloor.version.v1","version":"v0.7.0"}
 ```
 
 `rulefloor.version.v1`, `rulefloor.validation.v1`,
@@ -667,7 +691,7 @@ Rulefloor checks only the symbols explicitly declared on each row.
 |---|---|
 | `0` | OK. |
 | `1` | A rule failed or a command refused (tamper, skip, orphan, below FLOOR, duplicate, no-op rehash, …). |
-| `2` | Fatal — the tool could not evaluate: malformed ledger, missing field, unknown file kind, ambiguous tag, unreadable report, missing toolchain. A gate that cannot measure must never pass. |
+| `2` | Fatal — the tool could not evaluate: malformed ledger, missing field, unknown file kind, ambiguous tag or symbol, unreadable report, missing toolchain, or unavailable/insufficient required graph evidence. A gate that cannot measure must never pass. |
 
 ## Troubleshooting
 
@@ -706,6 +730,12 @@ exists (the tag check passed) but the run didn't execute it; usually a
 build-tag or platform constraint on the file. For selected machine validation,
 pass the repository's explicit `--tags`; for normal checks, use the matching
 `--run-profile NAME --tags TAGS` gate.
+
+**`CANNOT-EVALUATE: graph evidence unavailable or insufficient`** — this row
+uses Gograph stable IDs and therefore requires a persisted, current, complete,
+precise graph with typed-complete test-call resolution. Install Gograph if it is
+missing, run `gograph build . --precise`, and retry. Label-only cover rows do
+not require Gograph and never attempt to locate it.
 
 ## Guarantees and honest limits
 

@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2026-08-27
 
 ### Added
 
@@ -27,6 +27,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Binding policy and stable test identity use canonical `rulefloor-binding-v1`
   metadata inside the existing red-proof cell. RULE-FLOOR.md remains six
   columns, and existing label-only `covers-v1` rows remain metadata-only.
+
+### Compatibility
+
+- Existing six-column ledgers require no migration. Read-only acceptance checks
+  passed against two real legacy-label ledgers totaling 221 armed rows; both
+  ledger files remained byte-identical, including every row hash, `FLOOR`, and
+  `RED-PROOFS` value.
+- `rulefloor.version.v1`, `rulefloor.validation.v1`,
+  `rulefloor.capabilities.v1`, and `rulefloor.covers.v1` remain stable v1
+  contracts. New validation and capability fields are additive.
+
+### Security
+
+- Gograph is invoked directly with argument vectors, repository-confined
+  working directories, bounded output, strict single-document JSON decoding,
+  and no shell. Stable identities and persisted binding metadata are bounded
+  and validated.
 
 ## [0.6.0] - 2026-08-25
 
