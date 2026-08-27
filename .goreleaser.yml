@@ -24,7 +24,7 @@ snapshot:
     {{- if or (eq .Summary .Tag) (eq .Summary (printf "%s-dirty" .Tag)) -}}
     {{ .Version }}
     {{- else -}}
-    {{ incpatch .Version }}-0.{{ replace (replace (replace (replace .CommitDate "-" "") ":" "") "T" "") "Z" "" }}-{{ .ShortCommit }}
+    {{ incpatch .Version }}-0.{{ replace (replace (replace (replace .CommitDate "-" "") ":" "") "T" "") "Z" "" }}-{{ slice .FullCommit 0 12 }}
     {{- end -}}
     {{- if .IsGitDirty }}+dirty{{ end -}}
 
