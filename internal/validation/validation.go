@@ -69,10 +69,23 @@ type VersionResult struct {
 	Version             string `json:"version"`
 	ToolchainVersion    string `json:"toolchain_version"`
 	VersionDisagreement bool   `json:"version_disagreement,omitzero"`
+	// VersionAgreement is the three-state verdict on the linker stamp
+	// versus the toolchain's embedded module version: "pass" (they
+	// agree), "fail" (proven disagreement), or "cannot_evaluate" (the
+	// toolchain embedded no evidence — absent evidence is never a
+	// silent pass). VersionDisagreement remains the v1 boolean and is
+	// true exactly when VersionAgreement is "fail": a consumer that
+	// only reads the boolean cannot tell "agrees" from "cannot tell",
+	// which is why this field exists.
+	VersionAgreement Status `json:"version_agreement"`
 }
 
 // RuntimeVersionResult reports the legacy linker stamp alongside the main
-// module version embedded by the Go toolchain.
+// module version embedded by the Go toolchain. Builds from an extracted
+// source archive carry no VCS or module-resolution metadata, so the
+// toolchain version can be absent there — exactly the build shape a
+// forged stamp would hide behind, and why absence is cannot_evaluate
+// rather than agreement.
 func RuntimeVersionResult(stamp string) VersionResult {
 	toolchainVersion := "(unknown)"
 	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
@@ -82,22 +95,27 @@ func RuntimeVersionResult(stamp string) VersionResult {
 }
 
 func versionResult(stamp, toolchainVersion string) VersionResult {
+	agreement := versionAgreement(stamp, toolchainVersion)
 	return VersionResult{
 		SchemaVersion:       VersionSchemaVersion,
 		Version:             stamp,
 		ToolchainVersion:    toolchainVersion,
-		VersionDisagreement: versionsDisagree(stamp, toolchainVersion),
+		VersionDisagreement: agreement == StatusFail,
+		VersionAgreement:    agreement,
 	}
 }
 
-func versionsDisagree(stamp, toolchainVersion string) bool {
+func versionAgreement(stamp, toolchainVersion string) Status {
 	if toolchainVersion == "(unknown)" {
-		return false
+		return StatusCannotEvaluate
 	}
 	if stamp == "dev" && toolchainVersion == "(devel)" {
-		return false
+		return StatusPass
 	}
-	return stamp != toolchainVersion
+	if stamp == toolchainVersion {
+		return StatusPass
+	}
+	return StatusFail
 }
 
 type Result struct {

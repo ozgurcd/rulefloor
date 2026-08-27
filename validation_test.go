@@ -70,11 +70,14 @@ func TestVersionJSON(t *testing.T) {
 	}
 	var got map[string]any
 	decodeSingleJSON(t, stdout, &got)
-	if !reflect.DeepEqual(sortedKeys(got), []string{"schema_version", "toolchain_version", "version"}) {
+	if !reflect.DeepEqual(sortedKeys(got), []string{"schema_version", "toolchain_version", "version", "version_agreement"}) {
 		t.Fatalf("version keys = %v", sortedKeys(got))
 	}
 	if got["schema_version"] != versionSchemaVersion || got["version"] != "dev" || got["toolchain_version"] != "(devel)" {
 		t.Fatalf("version JSON = %#v", got)
+	}
+	if got["version_agreement"] != "pass" {
+		t.Fatalf("version agreement = %v, want pass for a dev toolchain build", got["version_agreement"])
 	}
 }
 

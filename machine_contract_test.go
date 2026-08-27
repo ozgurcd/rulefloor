@@ -23,6 +23,7 @@ func TestMachineV1GoldenDocuments(t *testing.T) {
 				SchemaVersion:    machine.VersionSchemaVersion,
 				Version:          "dev",
 				ToolchainVersion: "(devel)",
+				VersionAgreement: machine.StatusPass,
 			},
 		},
 		{
