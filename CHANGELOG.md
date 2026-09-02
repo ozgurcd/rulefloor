@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-09-02
+
+### Added
+
+- Additive `before_sentence_sha256` and `after_sentence_sha256` fields on every
+  `sentence_changed` entry in `rulefloor.ledger-diff.v1`. They are full
+  lowercase SHA-256 digests of the parsed sentence's UTF-8 bytes and remain
+  independent of the bounded human-review excerpts.
+- The `ledger-diff-sentence-sha256` binary capability token and exact machine
+  conformance coverage for the new evidence.
+
+### Compatibility
+
+- The ledger format, test fingerprints, commands, exit codes, and existing v1
+  fields are unchanged. The new JSON fields and capability token are additive.
+
 ## [0.8.0] - 2026-09-02
 
 ### Added

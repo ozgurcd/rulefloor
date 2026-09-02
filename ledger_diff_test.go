@@ -44,7 +44,9 @@ func TestLedgerDiffReportsSentenceChangeWithoutMovingTestFingerprint(t *testing.
 		t.Fatalf("result = %+v", result)
 	}
 	wantKinds := []ledgerdiff.ChangeKind{ledgerdiff.ChangeSentence}
-	if !reflect.DeepEqual(result.Rules[0].Changes, wantKinds) || result.Rules[0].BeforeSentenceExcerpt == result.Rules[0].AfterSentenceExcerpt {
+	if !reflect.DeepEqual(result.Rules[0].Changes, wantKinds) || result.Rules[0].BeforeSentenceExcerpt == result.Rules[0].AfterSentenceExcerpt ||
+		result.Rules[0].BeforeSentenceSHA256 == "" || result.Rules[0].AfterSentenceSHA256 == "" ||
+		result.Rules[0].BeforeSentenceSHA256 == result.Rules[0].AfterSentenceSHA256 {
 		t.Fatalf("rule change = %+v", result.Rules[0])
 	}
 	after, err := loadLedger(repo)
@@ -82,10 +84,17 @@ func TestLedgerDiffJSONMatchesV1Fixture(t *testing.T) {
 	header := ledgerdiff.HeaderState{Floor: 1, RedProofs: &redProofs, RepairedFixtureCount: 0}
 	comparison := ledgerdiff.Comparison{
 		BaseRef: "main", BaseCommit: "0123456789012345678901234567890123456789",
-		Before: header, After: header, Rules: []ledgerdiff.RuleChange{},
+		Before: header, After: header,
+		Rules: []ledgerdiff.RuleChange{{
+			RuleID: "R-1", Changes: []ledgerdiff.ChangeKind{ledgerdiff.ChangeSentence},
+			BeforeSentenceExcerpt: "Before.", AfterSentenceExcerpt: "After.",
+			BeforeSentenceSHA256: "3e6847a341e06ab8322bb7a0e5240d92efd66923897a086294ab89154814f5db",
+			AfterSentenceSHA256:  "0306b48ad9dd5473e42bb337d264bfadd2e1407a343f7d9a855ad5bb78ebb941",
+		}},
+		TotalRuleChanges: 1,
 	}
 	var output bytes.Buffer
-	if err := writeJSON(&output, newLedgerDiffResult(comparison, "same")); err != nil {
+	if err := writeJSON(&output, newLedgerDiffResult(comparison, "different")); err != nil {
 		t.Fatal(err)
 	}
 	expected, err := os.ReadFile(filepath.Join("testdata", "machine", "rulefloor.ledger-diff.v1.golden.json"))
@@ -97,4 +106,23 @@ func TestLedgerDiffJSONMatchesV1Fixture(t *testing.T) {
 	}
 	var decoded ledgerDiffResult
 	decodeSingleJSON(t, output.String(), &decoded)
+}
+
+func TestLedgerDiffSentenceDigestsAreOmittedFromUnrelatedChanges(t *testing.T) {
+	header := ledgerdiff.HeaderState{Floor: 1, RepairedFixtureCount: 0}
+	comparison := ledgerdiff.Comparison{
+		BaseRef: "main", BaseCommit: "0123456789012345678901234567890123456789",
+		Before: header, After: header,
+		Rules: []ledgerdiff.RuleChange{{
+			RuleID: "R-1", Changes: []ledgerdiff.ChangeKind{ledgerdiff.ChangeRuleAdded}, AfterSentenceExcerpt: "Added.",
+		}},
+		TotalRuleChanges: 1,
+	}
+	var output bytes.Buffer
+	if err := writeJSON(&output, newLedgerDiffResult(comparison, "different")); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "sentence_sha256") {
+		t.Fatalf("unrelated change contains sentence digest fields: %s", output.String())
+	}
 }

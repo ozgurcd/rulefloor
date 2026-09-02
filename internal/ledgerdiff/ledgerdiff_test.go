@@ -38,7 +38,12 @@ func TestCompareLedgersClassifiesLogicalChangesDeterministically(t *testing.T) {
 		t.Fatalf("header changes = %v, want %v", result.HeaderChanges, wantHeaders)
 	}
 	want := []RuleChange{
-		{RuleID: "R-1", Changes: []ChangeKind{ChangeSentence, ChangeBinding, ChangeProof, ChangeCoveredSymbols, ChangeTestFingerprint}, BeforeSentenceExcerpt: "Before.", AfterSentenceExcerpt: "After."},
+		{
+			RuleID: "R-1", Changes: []ChangeKind{ChangeSentence, ChangeBinding, ChangeProof, ChangeCoveredSymbols, ChangeTestFingerprint},
+			BeforeSentenceExcerpt: "Before.", AfterSentenceExcerpt: "After.",
+			BeforeSentenceSHA256: "3e6847a341e06ab8322bb7a0e5240d92efd66923897a086294ab89154814f5db",
+			AfterSentenceSHA256:  "0306b48ad9dd5473e42bb337d264bfadd2e1407a343f7d9a855ad5bb78ebb941",
+		},
 		{RuleID: "R-2", Changes: []ChangeKind{ChangeRuleRemoved}, BeforeSentenceExcerpt: "Removed."},
 		{RuleID: "R-3", Changes: []ChangeKind{ChangeRuleAdded}, AfterSentenceExcerpt: "Added."},
 	}
@@ -65,6 +70,26 @@ func TestCompareLedgersBoundsSentenceExcerpts(t *testing.T) {
 	if len([]rune(change.BeforeSentenceExcerpt)) != maxSentenceExcerptRunes+1 || !strings.HasSuffix(change.BeforeSentenceExcerpt, "…") ||
 		len([]rune(change.AfterSentenceExcerpt)) != maxSentenceExcerptRunes+1 || !strings.HasSuffix(change.AfterSentenceExcerpt, "…") {
 		t.Fatalf("change = %+v", change)
+	}
+	if change.BeforeSentenceSHA256 != "a7bf334bec6f17021671033b243b8689757212496cd525ba9873addde87b0c56" ||
+		change.AfterSentenceSHA256 != "dcecb7e8d7849e591c1cfedf0aa3f3dea07b8414d03ce18d415c7ef46c1664cf" {
+		t.Fatalf("sentence digests = %q -> %q", change.BeforeSentenceSHA256, change.AfterSentenceSHA256)
+	}
+}
+
+func TestSentenceSHA256UsesParsedUTF8BytesWithoutAdditionalNormalization(t *testing.T) {
+	model, err := ledger.Parse("FLOOR: 1\n\n| ID | one-sentence rule | enforced-by | check | red-proof | hash |\n|---|---|---|---|---|---|\n| R-1 |  Café   | - | NONE | - | - |\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.Rows[0].Rule != "Café" {
+		t.Fatalf("parsed sentence = %q", model.Rows[0].Rule)
+	}
+	if got := sentenceSHA256(model.Rows[0].Rule); got != "73473dcc12b763085904a5279d048c4d5b3b008c46f1f32443b99de04aa83a14" {
+		t.Fatalf("sentence digest = %q for parsed sentence %q", got, model.Rows[0].Rule)
+	}
+	if sentenceSHA256("Café") == sentenceSHA256("Cafe\u0301") {
+		t.Fatal("sentence digest unexpectedly normalizes Unicode")
 	}
 }
 

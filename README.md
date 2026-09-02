@@ -413,6 +413,17 @@ resolved commit, before/after header state, and sorted per-rule changes. Sentenc
 values are bounded excerpts, and documents report at most 1,000 rule changes
 with explicit `total_rule_changes` and `truncated` fields.
 
+Every `sentence_changed` rule also carries `before_sentence_sha256` and
+`after_sentence_sha256`. Each value is the full 64-character lowercase SHA-256
+of the UTF-8 bytes of the corresponding parsed sentence (`ledger.Row.Rule`).
+Hashing happens after the existing ledger parser trims surrounding Markdown
+cell whitespace. Rulefloor applies no additional trimming, case folding,
+newline rewriting, or Unicode normalization at the hashing step; embedded
+spaces, punctuation, capitalization, and Unicode code points therefore remain
+significant. These fields are absent from unrelated change classes. They bind
+an external review declaration to exact sentence content; they do not establish
+that the sentence is true.
+
 The command invokes Git directly with argument vectors—never through a shell—
 and resolves the caller-provided ref to a validated full commit identifier
 before reading `RULE-FLOOR.md`. Git and a committed baseline are required only
@@ -565,6 +576,9 @@ whether Gograph or a graph is available in the current environment. Arrays use
 the deterministic order shown by the exact conformance fixture in
 [`testdata/machine`](testdata/machine).
 
+The `ledger-diff-sentence-sha256` ledger feature advertises full sentence
+digests on `sentence_changed` entries in `rulefloor.ledger-diff.v1`.
+
 Execution capability is binary support by test kind: Go tests support static
 and executed validation; Playwright and Vitest support static validation only.
 Static mode never executes, and execute mode never falls back to static.
@@ -575,7 +589,7 @@ Repository status remains the responsibility of `check` and `validate`.
 `rulefloor version --json` writes one JSON document to stdout:
 
 ```json
-{"schema_version":"rulefloor.version.v1","version":"v0.8.0","toolchain_version":"v0.8.0"}
+{"schema_version":"rulefloor.version.v1","version":"v0.8.1","toolchain_version":"v0.8.1","version_agreement":"pass"}
 ```
 
 `rulefloor.version.v1`, `rulefloor.validation.v1`,

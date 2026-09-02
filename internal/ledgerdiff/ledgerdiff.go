@@ -3,6 +3,8 @@ package ledgerdiff
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -49,6 +51,8 @@ type RuleChange struct {
 	Changes               []ChangeKind `json:"changes"`
 	BeforeSentenceExcerpt string       `json:"before_sentence_excerpt,omitempty"`
 	AfterSentenceExcerpt  string       `json:"after_sentence_excerpt,omitempty"`
+	BeforeSentenceSHA256  string       `json:"before_sentence_sha256,omitempty"`
+	AfterSentenceSHA256   string       `json:"after_sentence_sha256,omitempty"`
 }
 
 type Comparison struct {
@@ -176,6 +180,8 @@ func compareRows(id string, before ledger.Row, hadBefore bool, after ledger.Row,
 		change.Changes = append(change.Changes, ChangeSentence)
 		change.BeforeSentenceExcerpt = sentenceExcerpt(before.Rule)
 		change.AfterSentenceExcerpt = sentenceExcerpt(after.Rule)
+		change.BeforeSentenceSHA256 = sentenceSHA256(before.Rule)
+		change.AfterSentenceSHA256 = sentenceSHA256(after.Rule)
 	}
 	if before.EnforcedBy != after.EnforcedBy || before.Check != after.Check ||
 		before.ExecutionPolicy != after.ExecutionPolicy || before.ReachabilityPolicy != after.ReachabilityPolicy ||
@@ -226,6 +232,11 @@ func sentenceExcerpt(sentence string) string {
 		return sentence
 	}
 	return string(runes[:maxSentenceExcerptRunes]) + "…"
+}
+
+func sentenceSHA256(sentence string) string {
+	digest := sha256.Sum256([]byte(sentence))
+	return hex.EncodeToString(digest[:])
 }
 
 func rowsByID(model *ledger.Ledger) map[string]ledger.Row {

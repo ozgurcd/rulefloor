@@ -80,7 +80,7 @@ func New(rulefloorVersion string, commands []string) Result {
 			string(ledger.ProofKindMutationObservation),
 			string(ledger.ProofKindCIReference),
 		},
-		LedgerFeatures: []string{"FLOOR", "RED-PROOFS", "six-column-ledger", "proof-v1", "covers-v1", "binding-v1", "exact-symbol-reach", "REPAIRED-FIXTURES"},
+		LedgerFeatures: []string{"FLOOR", "RED-PROOFS", "six-column-ledger", "proof-v1", "covers-v1", "binding-v1", "exact-symbol-reach", "ledger-diff-sentence-sha256", "REPAIRED-FIXTURES"},
 		Commands:       commands,
 		ExecutionSemantics: ExecutionSemantics{
 			SupportDependsOn:         "test_kind",
