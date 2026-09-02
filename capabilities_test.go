@@ -16,13 +16,13 @@ func TestCapabilitiesHumanOutput(t *testing.T) {
 		t.Fatalf("capabilities: code=%d stderr=%q", code, stderr)
 	}
 	expected := `rulefloor dev capabilities
-machine schemas: rulefloor.version.v1, rulefloor.validation.v1, rulefloor.capabilities.v1, rulefloor.covers.v1
+machine schemas: rulefloor.version.v1, rulefloor.validation.v1, rulefloor.capabilities.v1, rulefloor.covers.v1, rulefloor.ledger-diff.v1
 test kinds: go-test (static, execute); playwright (static); vitest (static)
 validation modes: static, execute
 proof kinds: legacy_manual, manual_observation, mutation_observation, ci_reference
 ledger features: FLOOR, RED-PROOFS, six-column-ledger, proof-v1, covers-v1, binding-v1, exact-symbol-reach, REPAIRED-FIXTURES
 structural reach: gograph exact stable IDs for go-test (possible is insufficient)
-commands: amend, arm, capabilities, check, covers, declare, diff, help, init, list, prove, redproofs, rehash, repair-fixture-row, show, unarmed, unproved, validate, version
+commands: amend, arm, capabilities, check, covers, declare, diff, help, init, ledger-diff, list, prove, redproofs, rehash, repair-fixture-row, show, unarmed, unproved, validate, version
 execution: persisted policy; legacy profiles compatible; static never executes; execute never falls back to static
 `
 	if stdout != expected {
@@ -46,7 +46,7 @@ func TestCapabilitiesJSONMatchesV1Fixture(t *testing.T) {
 	var result binarycap.Result
 	decodeSingleJSON(t, stdout, &result)
 	want := binarycap.New("dev", []string{
-		"amend", "arm", "capabilities", "check", "covers", "declare", "diff", "help", "init", "list", "prove",
+		"amend", "arm", "capabilities", "check", "covers", "declare", "diff", "help", "init", "ledger-diff", "list", "prove",
 		"redproofs", "rehash", "repair-fixture-row", "show", "unarmed", "unproved", "validate", "version",
 	})
 	if !reflect.DeepEqual(result, want) {

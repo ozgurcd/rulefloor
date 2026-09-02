@@ -37,6 +37,7 @@ Usage:
                                               [--run [--profile NAME] [--tags T]] [--repo PATH]
   rulefloor rehash ID                         [--repo PATH]
   rulefloor diff ID                           [--repo PATH]
+  rulefloor ledger-diff                       --base REF [--json] [--repo PATH]
   rulefloor repair-fixture-row ID             [--repo PATH]
   rulefloor covers                            [--json] [--repo PATH]
   rulefloor check                             [--repo PATH] [--report pw.json] [--all "repo1,repo2"]
@@ -117,6 +118,13 @@ Show the current bound span against the newest Git revision whose extracted
 fingerprint matches the ledger. This read-only comparison does not classify a
 change as cosmetic or semantic.
 `,
+	"ledger-diff": `Usage: rulefloor ledger-diff --base REF [--json] [--repo PATH]
+
+Compare the current logical ledger with RULE-FLOOR.md at a committed Git base.
+Sentence, binding, proof, covered-symbol, and test-fingerprint changes are
+classified separately. A difference exits 1; unavailable or invalid Git
+evidence exits 2. This detects recorded text changes, not whether prose is true.
+`,
 	"validate": `Usage: rulefloor validate ID --repo PATH --mode static|execute [--profile NAME] [--tags T] --json
 
 Validate one selected binding as a strict rulefloor.validation.v1 document.
@@ -159,6 +167,7 @@ var flagTakesValue = map[string]bool{
 	"--proof-ref":   true,
 	"--covers":      true,
 	"--execution":   true,
+	"--base":        true,
 	"--json":        false,
 	"--adopt":       false,
 	"--replace":     false,
@@ -228,6 +237,9 @@ var commandSpecs = map[string]commandSpec{
 	}},
 	"diff": {1, map[string]bool{"--repo": true}, func(c commandInvocation) error {
 		return cmdDiff(c.repo, c.pos[0], c.stdout)
+	}},
+	"ledger-diff": {0, map[string]bool{"--repo": true, "--base": true, "--json": true}, func(c commandInvocation) error {
+		return cmdLedgerDiff(c.repo, c.flags["--base"], c.flags["--json"] == "true", c.stdout)
 	}},
 	"repair-fixture-row": {1, map[string]bool{"--repo": true}, func(c commandInvocation) error {
 		return cmdRepairFixtureRow(c.repo, c.pos[0], c.stdout)

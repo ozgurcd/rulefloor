@@ -7,8 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-02
+
 ### Added
 
+- `rulefloor ledger-diff --base REF [--json]` for deterministic logical ledger
+  review against a committed Git baseline. It classifies sentence, binding,
+  proof, covered-symbol, test-fingerprint, and ratchet-header changes without
+  changing the ledger.
+- Stable `rulefloor.ledger-diff.v1` machine output with exact conformance data,
+  closed change/status enums, single-document JSON, and exit 0/1/2 for
+  same/different/cannot-evaluate.
 - Additive Go-toolchain module provenance in `rulefloor.version.v1`, including
   an explicit disagreement signal when a linker stamp conflicts with
   `debug.ReadBuildInfo()`.
@@ -17,9 +26,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The existing 12-character hash remains explicitly a test-body fingerprint;
+  sentence review is separate so `rehash`, `diff`, legacy ledgers, and
+  `rulefloor.validation.v1` keep their established meanings.
 - Release builds use the tagged module through GoReleaser's verifiable
   module-proxy mode instead of treating a caller-supplied linker value as the
   only version evidence.
+
+### Security
+
+- Ledger baseline lookup invokes Git without a shell, validates the resolved
+  full commit identity, confines the working directory to the repository, and
+  bounds subprocess output. The command does not print proof text.
+
+### Compatibility
+
+- RULE-FLOOR.md remains the canonical six-column ledger with no migration.
+  Existing hashes, proofs, bindings, and stable v1 version/validation schemas
+  are unchanged. Capabilities add only the new command and machine interface.
 
 ## [0.7.0] - 2026-08-27
 

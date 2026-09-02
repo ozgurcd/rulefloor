@@ -28,6 +28,7 @@ check OK: 2 rows (2 armed), FLOOR 2, RED-PROOFS 2 (measured 2)
 - [Five-minute tutorial](#five-minute-tutorial)
 - [Concepts](#concepts)
 - [Command reference](#command-reference)
+- [Review ledger changes](#review-ledger-changes)
 - [Covered product symbols](#covered-product-symbols)
 - [Binary capabilities](#binary-capabilities)
 - [Machine-readable validation](#machine-readable-validation)
@@ -70,6 +71,12 @@ The rule ID is permanent, but its human sentence can be clarified with
 the optional covered-symbol set; the binding, proof, hash, FLOOR, and
 RED-PROOFS remain unchanged. Legitimate rule deletion remains intentionally
 unavailable because it would violate the ledger ratchet.
+
+Before merging a ledger edit, **`ledger-diff --base REF`** compares the current
+logical ledger with its committed form at a selected Git base. It classifies a
+sentence change separately from binding, proof, protected-symbol, and test-body
+fingerprint changes. This makes prose drift visible to review; it does not
+decide whether either sentence is true.
 
 ## Install
 
@@ -295,6 +302,13 @@ Any byte of drift changes it. The extractor is string- and comment-aware, so
 parentheses and braces inside strings, template literals, and comments don't
 confuse the span.
 
+The hash deliberately does **not** include the English rule sentence. It is a
+test fingerprint, including in `rulefloor.validation.v1`; combining prose with
+it would make sentence edits indistinguishable from test-body drift and would
+break `rehash` and `diff` semantics. Use `ledger-diff --base REF` to detect and
+review recorded sentence changes. Neither mechanism validates the sentence's
+meaning.
+
 ### The check field
 
 `<file> @ <profile>`. The file is relative to the repo root and determines
@@ -348,6 +362,7 @@ Every command takes `--repo PATH` (default `.`).
 | `prove ID --red-proof TEXT [--replace\|--supersede\|--force] [--run]` | Record an observation on an armed row. `--replace` remains limited to a non-proof. `--supersede` replaces a genuine re-watched proof and stores its full fingerprint link. `--force` is the loud exceptional override. `--run` executes one Go binding and writes only after that selected test reports FAIL. |
 | `rehash ID` | Accept a reviewed body change. Refuses a no-op, refuses skipped tests. |
 | `diff ID` | Read-only comparison of the working bound span with the newest Git revision whose extracted fingerprint exactly matches the ledger. It never classifies drift as cosmetic or semantic. |
+| `ledger-diff --base REF [--json]` | Compare the current logical ledger with its committed form at `REF`. Classify sentence, binding, proof, covered-symbol, and test-fingerprint changes separately. Differences exit 1; unavailable evidence exits 2. |
 | `repair-fixture-row ID` | One-time migration for an unarmed row explicitly described as `Fixture marker, not a rule:`. Refuses if the ID is still a real extractor-discovered tag; removes the row and records its ID in `REPAIRED-FIXTURES` so FLOOR is preserved. |
 | `covers [--json]` | Read every rule ID and its optional covered-symbol set. JSON is a deterministic `rulefloor.covers.v1` document. |
 | `check [--report pw.json] [--all "repo1,repo2"]` | Verify the complete repository gate (below). |
@@ -367,6 +382,48 @@ Refusals you will meet, all deliberate:
   genuine proof (only a `blocked:…` or dateless non-proof may be replaced) ·
   `prove --supersede` without a genuine prior record · `prove --run` when the
   selected test passes or cannot execute.
+
+## Review ledger changes
+
+`rulefloor ledger-diff --base REF` is a read-only review gate for changes to
+`RULE-FLOOR.md`. It resolves `REF` to a commit, reads that commit's ledger with
+Git, parses both ledgers through the same strict parser, and compares their
+logical models:
+
+```text
+$ rulefloor ledger-diff --base origin/main
+ledger differs from origin/main (0123456789ab)
+CHECKOUT-1: sentence_changed
+  before: "An emptied cart usually totals zero."
+  after:  "An emptied cart always totals zero."
+```
+
+The closed change classifications are `rule_added`, `rule_removed`,
+`sentence_changed`, `binding_changed`, `proof_changed`,
+`covered_symbols_changed`, and `test_fingerprint_changed`. Header changes to
+`FLOOR`, `RED-PROOFS`, or `REPAIRED-FIXTURES` are reported separately as
+`floor_changed`, `red_proofs_changed`, or `repaired_fixtures_changed`. Proof
+text is never printed; only its logical change is identified.
+
+`--json` emits one deterministic `rulefloor.ledger-diff.v1` document. Its
+`status` is `same`, `different`, or `cannot_evaluate`; the corresponding exit
+codes are 0, 1, and 2. Successful and cannot-evaluate JSON responses do not mix
+human prose into stdout or stderr. The schema includes the selected base ref,
+resolved commit, before/after header state, and sorted per-rule changes. Sentence
+values are bounded excerpts, and documents report at most 1,000 rule changes
+with explicit `total_rule_changes` and `truncated` fields.
+
+The command invokes Git directly with argument vectors—never through a shell—
+and resolves the caller-provided ref to a validated full commit identifier
+before reading `RULE-FLOOR.md`. Git and a committed baseline are required only
+for this command, not for normal ledger operations.
+
+This is a review aid, not semantic verification. It catches that recorded text
+changed relative to the selected baseline. It cannot detect a false sentence
+that was already present at that baseline, decide whether new wording matches
+the bound test, establish who approved it, or stop someone from selecting a
+different base. Repository history and review remain the authority for those
+questions.
 
 ### The red-proof obligation
 
@@ -522,7 +579,8 @@ Repository status remains the responsibility of `check` and `validate`.
 ```
 
 `rulefloor.version.v1`, `rulefloor.validation.v1`,
-`rulefloor.capabilities.v1`, and `rulefloor.covers.v1` are stable v1 contracts.
+`rulefloor.capabilities.v1`, `rulefloor.covers.v1`, and
+`rulefloor.ledger-diff.v1` are stable v1 contracts.
 Within v1, required fields, field meanings, outcome/reason meanings, and exit
 mapping will not be removed or renamed. Compatible releases may add optional
 fields. Consumers must reject an unknown `schema_version` rather than guessing.
@@ -804,6 +862,11 @@ business-truth oracle, or a claim that every dependency of a test is unchanged.
   exactly matches the ledger. It is bounded to the newest 200 revisions of the
   check file, reads only the bound span, and does not establish authorship,
   intent, or semantic equivalence.
+- `ledger-diff` compares two recorded logical ledgers. It detects that a
+  sentence changed relative to the selected committed base, but cannot judge
+  whether the old or new sentence is true or whether the binding still proves
+  the words. A user who changes both the sentence and review baseline has
+  crossed the Git/review trust boundary, not defeated a semantic proof.
 
 - A **conditional** skip (`test.skip(env.CI, ...)` inside the body, or a
   guarded `t.Skip()` that the arm-time scan didn't match) is part of the

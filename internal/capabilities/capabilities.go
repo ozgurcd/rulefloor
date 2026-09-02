@@ -8,6 +8,7 @@ import (
 	checkengine "github.com/ozgurcd/rulefloor/internal/check"
 	"github.com/ozgurcd/rulefloor/internal/extract"
 	"github.com/ozgurcd/rulefloor/internal/ledger"
+	"github.com/ozgurcd/rulefloor/internal/ledgerdiff"
 	machine "github.com/ozgurcd/rulefloor/internal/validation"
 )
 
@@ -69,6 +70,7 @@ func New(rulefloorVersion string, commands []string) Result {
 			machine.SchemaVersion,
 			SchemaVersion,
 			ledger.CoversSchemaVersion,
+			ledgerdiff.SchemaVersion,
 		},
 		TestKinds:       testKinds,
 		ValidationModes: []string{string(machine.ModeStatic), string(machine.ModeExecute)},
