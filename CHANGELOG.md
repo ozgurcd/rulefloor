@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-04
+
+### Changed
+
+- Full `check` now compiles one Go test binary per package and build-tag set,
+  then runs each bound test in its own fresh process. This removes repeated
+  package compilation without batching tests, sharing package globals, changing
+  deterministic ledger-order output, or weakening the standard ten-minute test
+  timeout.
+- Compile results live only for one `check` invocation and temporary binaries
+  are removed afterward. `validate`, `prove --run`, and selected `check --only`
+  retain their existing direct single-test execution path.
+
+### Performance
+
+- On a representative 244-row execution-heavy ledger, the same full check fell
+  from 262.75 seconds with v0.8.1 to 29.86 seconds with v0.9.0 on the same host.
+  Human output was byte-for-byte identical. Results vary with package layout,
+  build cache state, and test runtime.
+
+### Security
+
+- Go compilation and test execution continue to use direct argument vectors,
+  never a shell. Each selected test remains process-isolated with a fresh
+  `TestMain` and package state.
+- Gograph evidence is deliberately not cached: every exact-reach evaluation
+  retains its existing current, complete, precise, typed-complete fail-closed
+  checks.
+
+### Compatibility
+
+- Ledger bytes, rule hashes, ratchets, command behavior, exit codes, and all
+  stable v1 machine schemas are unchanged. No migration or rehash is required.
+
 ## [0.8.1] - 2026-09-02
 
 ### Added

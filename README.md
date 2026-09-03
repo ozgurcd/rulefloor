@@ -589,7 +589,7 @@ Repository status remains the responsibility of `check` and `validate`.
 `rulefloor version --json` writes one JSON document to stdout:
 
 ```json
-{"schema_version":"rulefloor.version.v1","version":"v0.8.1","toolchain_version":"v0.8.1","version_agreement":"pass"}
+{"schema_version":"rulefloor.version.v1","version":"v0.9.0","toolchain_version":"v0.9.0","version_agreement":"pass"}
 ```
 
 `rulefloor.version.v1`, `rulefloor.validation.v1`,
@@ -729,10 +729,19 @@ other rows, FLOOR/RED-PROOFS comparison, and orphan discovery; run ordinary
 ## Wiring into your entrypoints
 
 A ledger nobody checks is decoration. Put `check` inside the commands people
-already run — and put it early. Full `check` launches one isolated `go test`
-per executable Go row in deterministic ledger order; large ledgers may take
-minutes. Use `check --only ID` for local iteration, but retain full `check` in
-the gate so unrelated drift and orphan tags cannot hide.
+already run — and put it early. Full `check` compiles one Go test binary per
+package and build-tag set, then launches that binary in a fresh process for each
+executable row in deterministic ledger order. Tests are not batched or run in
+parallel: every row receives fresh package state and `TestMain`, as it did when
+each row invoked `go test` separately. The standard ten-minute Go test timeout
+is retained.
+
+Compiled binaries and compile results exist only for that `check` invocation
+and are removed afterward. Rulefloor does not persist source, execution, or
+Gograph evidence caches; exact-reach rows still require fresh fail-closed graph
+evaluation. `check --only`, `validate`, and `prove --run` keep their direct
+single-test path. Use `check --only ID` for local iteration, but retain full
+`check` in the gate so unrelated drift and orphan tags cannot hide.
 
 **Makefile:**
 

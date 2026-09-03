@@ -145,6 +145,8 @@ func checkRepo(repo, reportPath, runProfile, tags string, stdout io.Writer) (int
 	}
 	armed := 0
 	reachVerifier := newGraphClient()
+	goExecutor := checkengine.NewCompiledGoTestExecutor(checkengine.ExecRunner{})
+	defer goExecutor.Close()
 	for i := range model.Rows {
 		row := &model.Rows[i]
 		if !row.Armed() {
@@ -154,7 +156,7 @@ func checkRepo(repo, reportPath, runProfile, tags string, stdout io.Writer) (int
 		armed++
 		rowProblems, err := checkRow(repo, row, rowCheckOptions{
 			report: playwrightReport, haveReport: reportPath != "", runProfile: runProfile, tags: tags,
-			reachVerifier: reachVerifier,
+			reachVerifier: reachVerifier, goExecutor: goExecutor,
 		})
 		if err != nil {
 			return 0, err
@@ -196,6 +198,7 @@ type rowCheckOptions struct {
 	runProfile    string
 	tags          string
 	reachVerifier reach.Verifier
+	goExecutor    checkengine.GoTestExecutor
 }
 
 func checkRow(repo string, row *Row, options rowCheckOptions) ([]string, error) {
@@ -273,10 +276,10 @@ func executeRowBinding(testFile string, binding rulemodel.Binding, evaluation ch
 		return "", nil
 	}
 	if binding.Execution == rulemodel.ExecutionExecute {
-		return runGoTest(testFile, evaluation.Ref.FuncName, "", false)
+		return runGoTestWith(options.goExecutor, testFile, evaluation.Ref.FuncName, "", false)
 	}
 	if options.runProfile != "" && binding.Profile == options.runProfile {
-		return runGoTest(testFile, evaluation.Ref.FuncName, options.tags, true)
+		return runGoTestWith(options.goExecutor, testFile, evaluation.Ref.FuncName, options.tags, true)
 	}
 	return "", nil
 }
@@ -300,6 +303,18 @@ func playwrightReportProblems(id string, kind extract.Kind, options rowCheckOpti
 
 func runGoTest(testFile, functionName, tags string, skipIsFatal bool) (string, error) {
 	execution := checkengine.RunGoTest(context.Background(), checkengine.ExecRunner{}, testFile, functionName, tags)
+	return reportGoTestExecution(execution, functionName, skipIsFatal)
+}
+
+func runGoTestWith(executor checkengine.GoTestExecutor, testFile, functionName, tags string, skipIsFatal bool) (string, error) {
+	if executor == nil {
+		return runGoTest(testFile, functionName, tags, skipIsFatal)
+	}
+	execution := executor.Run(context.Background(), testFile, functionName, tags)
+	return reportGoTestExecution(execution, functionName, skipIsFatal)
+}
+
+func reportGoTestExecution(execution checkengine.Execution, functionName string, skipIsFatal bool) (string, error) {
 	if execution.Status == checkengine.ExecutionPass {
 		return "", nil
 	}

@@ -3,7 +3,6 @@ package check
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -192,30 +191,7 @@ func RunGoTest(ctx context.Context, runner CommandRunner, testFile, functionName
 	}
 	args = append(args, ".")
 	output, err := runner.Run(ctx, filepath.Dir(testFile), "go", args...)
-	text := string(output)
-	if contextErr := ctx.Err(); contextErr != nil {
-		reason := "context_canceled"
-		if errors.Is(contextErr, context.DeadlineExceeded) {
-			reason = "deadline_exceeded"
-		}
-		return Execution{Status: ExecutionCannotEvaluate, Reason: reason, Message: BoundedDiagnostic(text, contextErr.Error())}
-	}
-	if strings.Contains(text, "--- SKIP: "+functionName) {
-		return Execution{Status: ExecutionCannotEvaluate, Performed: true, Reason: "test_skipped", Message: BoundedDiagnostic(text, "test skipped at runtime")}
-	}
-	if strings.Contains(text, "--- FAIL: "+functionName) {
-		return Execution{Status: ExecutionFail, Performed: true, Reason: "execution_failed", Message: BoundedDiagnostic(text, "bound test failed")}
-	}
-	if err != nil {
-		if errors.Is(err, exec.ErrNotFound) {
-			return Execution{Status: ExecutionCannotEvaluate, Reason: "toolchain_unavailable", Message: BoundedMessage(err.Error())}
-		}
-		return Execution{Status: ExecutionCannotEvaluate, Reason: "execution_failed", Message: BoundedDiagnostic(text, err.Error())}
-	}
-	if !strings.Contains(text, "--- PASS: "+functionName) {
-		return Execution{Status: ExecutionCannotEvaluate, Performed: true, Reason: "execution_failed", Message: BoundedDiagnostic(text, "go test did not report the selected test as passed")}
-	}
-	return Execution{Status: ExecutionPass, Performed: true, Reason: "rule_passed"}
+	return interpretGoTestResult(ctx, output, err, functionName, true)
 }
 
 func ValidateBuildTags(tags string) error {
