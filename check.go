@@ -23,6 +23,7 @@ type checkOptions struct {
 	RunProfile string
 	Tags       string
 	OnlyID     string
+	Timings    bool
 }
 
 func cmdCheck(repo string, options checkOptions, stdout io.Writer) error {
@@ -33,10 +34,10 @@ func cmdCheck(repo string, options checkOptions, stdout io.Writer) error {
 		if options.AllSpec != "" || options.ReportPath != "" {
 			return fatalf("check: --only cannot be combined with --all or --report")
 		}
-		return checkOnly(repo, options.OnlyID, options.RunProfile, options.Tags, stdout)
+		return checkOnly(repo, options.OnlyID, options, stdout)
 	}
 	if options.AllSpec == "" {
-		n, err := checkRepo(repo, options.ReportPath, options.RunProfile, options.Tags, stdout)
+		n, err := checkRepo(repo, options, stdout)
 		if err != nil {
 			return err
 		}
@@ -63,7 +64,7 @@ func cmdCheck(repo string, options checkOptions, stdout io.Writer) error {
 	total := 0
 	for _, target := range targets {
 		fmt.Fprintf(stdout, "== %s ==\n", target)
-		n, err := checkRepo(target, "", "", "", stdout)
+		n, err := checkRepo(target, checkOptions{Timings: options.Timings}, stdout)
 		if err != nil {
 			var exit exitErr
 			if errors.As(err, &exit) {
@@ -79,7 +80,9 @@ func cmdCheck(repo string, options checkOptions, stdout io.Writer) error {
 	return nil
 }
 
-func checkOnly(repo, id, runProfile, tags string, stdout io.Writer) error {
+func checkOnly(repo, id string, options checkOptions, stdout io.Writer) error {
+	timer := newCheckTimer(options.Timings)
+	defer timer.write(stdout, repo, nil)
 	model, err := loadLedger(repo)
 	if err != nil {
 		return err
@@ -95,12 +98,14 @@ func checkOnly(repo, id, runProfile, tags string, stdout io.Writer) error {
 	if err != nil {
 		return fatalf("row %s: %v", id, err)
 	}
-	if runProfile != "" && runProfile != binding.Profile {
-		return fatalf("check: --only %s requested profile %q but the row declares %q", id, runProfile, binding.Profile)
+	if options.RunProfile != "" && options.RunProfile != binding.Profile {
+		return fatalf("check: --only %s requested profile %q but the row declares %q", id, options.RunProfile, binding.Profile)
 	}
+	rowStarted := timer.startRule()
 	problems, err := checkRow(repo, row, rowCheckOptions{
-		runProfile: runProfile, tags: tags, reachVerifier: newGraphClient(),
+		runProfile: options.RunProfile, tags: options.Tags, reachVerifier: newGraphClient(),
 	})
+	timer.finishRule(id, rowStarted)
 	if err != nil {
 		return err
 	}
@@ -114,7 +119,10 @@ func checkOnly(repo, id, runProfile, tags string, stdout io.Writer) error {
 	return nil
 }
 
-func checkRepo(repo, reportPath, runProfile, tags string, stdout io.Writer) (int, error) {
+func checkRepo(repo string, options checkOptions, stdout io.Writer) (int, error) {
+	timer := newCheckTimer(options.Timings)
+	var goExecutor *checkengine.CompiledGoTestExecutor
+	defer func() { timer.write(stdout, repo, goExecutor) }()
 	model, err := loadLedger(repo)
 	if err != nil {
 		return 0, err
@@ -137,15 +145,15 @@ func checkRepo(repo, reportPath, runProfile, tags string, stdout io.Writer) (int
 		}
 	}
 	var playwrightReport map[string][]string
-	if reportPath != "" {
-		playwrightReport, err = parsePWReport(reportPath)
+	if options.ReportPath != "" {
+		playwrightReport, err = parsePWReport(options.ReportPath)
 		if err != nil {
 			return 0, err
 		}
 	}
 	armed := 0
 	reachVerifier := newGraphClient()
-	goExecutor := checkengine.NewCompiledGoTestExecutor(checkengine.ExecRunner{})
+	goExecutor = checkengine.NewCompiledGoTestExecutor(checkengine.ExecRunner{})
 	defer goExecutor.Close()
 	for i := range model.Rows {
 		row := &model.Rows[i]
@@ -154,10 +162,12 @@ func checkRepo(repo, reportPath, runProfile, tags string, stdout io.Writer) (int
 			continue
 		}
 		armed++
+		rowStarted := timer.startRule()
 		rowProblems, err := checkRow(repo, row, rowCheckOptions{
-			report: playwrightReport, haveReport: reportPath != "", runProfile: runProfile, tags: tags,
+			report: playwrightReport, haveReport: options.ReportPath != "", runProfile: options.RunProfile, tags: options.Tags,
 			reachVerifier: reachVerifier, goExecutor: goExecutor,
 		})
+		timer.finishRule(row.ID, rowStarted)
 		if err != nil {
 			return 0, err
 		}

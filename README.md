@@ -365,8 +365,8 @@ Every command takes `--repo PATH` (default `.`).
 | `ledger-diff --base REF [--json]` | Compare the current logical ledger with its committed form at `REF`. Classify sentence, binding, proof, covered-symbol, and test-fingerprint changes separately. Differences exit 1; unavailable evidence exits 2. |
 | `repair-fixture-row ID` | One-time migration for an unarmed row explicitly described as `Fixture marker, not a rule:`. Refuses if the ID is still a real extractor-discovered tag; removes the row and records its ID in `REPAIRED-FIXTURES` so FLOOR is preserved. |
 | `covers [--json]` | Read every rule ID and its optional covered-symbol set. JSON is a deterministic `rulefloor.covers.v1` document. |
-| `check [--report pw.json] [--all "repo1,repo2"]` | Verify the complete repository gate (below). |
-| `check --only ID` | Fast human feedback for one armed binding. This intentionally omits other rows, global ratchet evaluation, and orphan scanning, so it never replaces full `check`. A matching `--run-profile` executes a non-unit Go row. |
+| `check [--report pw.json] [--all "repo1,repo2"] [--timings]` | Verify the complete repository gate (below). `--timings` appends bounded human performance diagnostics. |
+| `check --only ID [--timings]` | Fast human feedback for one armed binding. This intentionally omits other rows, global ratchet evaluation, and orphan scanning, so it never replaces full `check`. A matching `--run-profile` executes a non-unit Go row. |
 | `validate ID --mode static\|execute --json` | Validate exactly one rule and emit `rulefloor.validation.v1` JSON. Optional execute-only `--profile NAME` selects the declared profile; optional `--tags TAGS` supplies validated Go build tags. |
 | `capabilities [--json]` | Describe features compiled into this binary without reading a repository or ledger. |
 | `version --json` | Emit `rulefloor.version.v1` JSON using the same release-stamped version as human output. |
@@ -589,7 +589,7 @@ Repository status remains the responsibility of `check` and `validate`.
 `rulefloor version --json` writes one JSON document to stdout:
 
 ```json
-{"schema_version":"rulefloor.version.v1","version":"v0.9.0","toolchain_version":"v0.9.0","version_agreement":"pass"}
+{"schema_version":"rulefloor.version.v1","version":"v0.9.1","toolchain_version":"v0.9.1","version_agreement":"pass"}
 ```
 
 `rulefloor.version.v1`, `rulefloor.validation.v1`,
@@ -726,6 +726,20 @@ Its output states that it is not a full repository gate. It deliberately skips
 other rows, FLOOR/RED-PROOFS comparison, and orphan discovery; run ordinary
 `check` before merging. It cannot combine with `--all` or `--report`.
 
+**`--timings`** appends an opt-in human diagnostic after each checked
+repository. It reports total elapsed time, total package-compilation time, and
+at most the ten slowest compile groups and ten slowest armed-row evaluations.
+Row time includes source extraction, static integrity checks, protected-symbol
+graph evaluation, and any selected test execution; the first executed row in a
+compile group also includes that group's compilation delay. A selected
+`check --only` uses the direct single-test path, so it reports total and row
+time but no separately observed compile group.
+
+Timing values are intentionally not machine contracts: they vary with host
+load, Go caches, graph state, and test behavior. The flag does not change rule
+ordering, evaluation, exit codes, ledger bytes, or any versioned JSON schema.
+Normal `check` output remains unchanged when the flag is absent.
+
 ## Wiring into your entrypoints
 
 A ledger nobody checks is decoration. Put `check` inside the commands people
@@ -742,6 +756,11 @@ Gograph evidence caches; exact-reach rows still require fresh fail-closed graph
 evaluation. `check --only`, `validate`, and `prove --run` keep their direct
 single-test path. Use `check --only ID` for local iteration, but retain full
 `check` in the gate so unrelated drift and orphan tags cannot hide.
+
+When a full check is unexpectedly slow, run `rulefloor check --timings` once
+to distinguish package compilation from slow row evaluation. Keep ordinary
+`check` as the deterministic gate; timings are transient diagnostic output and
+should not be compared as reproducible evidence.
 
 **Makefile:**
 

@@ -41,7 +41,7 @@ Usage:
   rulefloor repair-fixture-row ID             [--repo PATH]
   rulefloor covers                            [--json] [--repo PATH]
   rulefloor check                             [--repo PATH] [--report pw.json] [--all "repo1,repo2"]
-                                              [--run-profile NAME [--tags T]] [--only ID]
+                                              [--run-profile NAME [--tags T]] [--only ID] [--timings]
   rulefloor validate ID --repo PATH --mode static|execute [--profile NAME] [--tags T] --json
   rulefloor capabilities [--json]
   rulefloor version [--json]                  (also: rulefloor --version)
@@ -105,12 +105,14 @@ unarmed rules, restricted/skipped tests, and a no-op unchanged fingerprint. It d
 not replace red-proof evidence; use prove --supersede after re-watching an
 extended test, or prove --force only for an exceptional explicit override.
 `,
-	"check": `Usage: rulefloor check [--repo PATH] [--report pw.json] [--all "repo1,repo2"] [--run-profile NAME [--tags T]] [--only ID]
+	"check": `Usage: rulefloor check [--repo PATH] [--report pw.json] [--all "repo1,repo2"] [--run-profile NAME [--tags T]] [--only ID] [--timings]
 
 Without --only, verify the complete repository gate including ratchets and
 orphans. --only evaluates one armed binding for fast feedback and is not a
 replacement for the full gate. Legacy unit Go rows execute; other Go profiles
-execute only with a matching --run-profile.
+execute only with a matching --run-profile. --timings appends a bounded human
+diagnostic with total time, package compilation time, and the 10 slowest row
+evaluations. Row time includes static, graph, and any executed-test work.
 `,
 	"diff": `Usage: rulefloor diff ID [--repo PATH]
 
@@ -174,6 +176,7 @@ var flagTakesValue = map[string]bool{
 	"--force":       false,
 	"--supersede":   false,
 	"--run":         false,
+	"--timings":     false,
 }
 
 type commandInvocation struct {
@@ -247,12 +250,12 @@ var commandSpecs = map[string]commandSpec{
 	"covers": {0, map[string]bool{"--repo": true, "--json": true}, func(c commandInvocation) error {
 		return cmdCovers(c.repo, c.flags["--json"] == "true", c.stdout)
 	}},
-	"check": {0, map[string]bool{"--repo": true, "--report": true, "--all": true, "--run-profile": true, "--tags": true, "--only": true}, func(c commandInvocation) error {
+	"check": {0, map[string]bool{"--repo": true, "--report": true, "--all": true, "--run-profile": true, "--tags": true, "--only": true, "--timings": true}, func(c commandInvocation) error {
 		if c.flags["--tags"] != "" && c.flags["--run-profile"] == "" {
 			return fatalf("check: --tags requires --run-profile")
 		}
 		return cmdCheck(c.repo, checkOptions{
-			ReportPath: c.flags["--report"], AllSpec: c.flags["--all"], RunProfile: c.flags["--run-profile"], Tags: c.flags["--tags"], OnlyID: c.flags["--only"],
+			ReportPath: c.flags["--report"], AllSpec: c.flags["--all"], RunProfile: c.flags["--run-profile"], Tags: c.flags["--tags"], OnlyID: c.flags["--only"], Timings: c.flags["--timings"] == "true",
 		}, c.stdout)
 	}},
 }

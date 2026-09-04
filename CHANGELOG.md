@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-04
+
+### Added
+
+- `rulefloor check --timings` appends a bounded human diagnostic containing
+  total elapsed time, aggregate Go package-compilation time, the ten slowest
+  compile groups, and the ten slowest armed-row evaluations.
+- Compile timing observes the existing per-package/build-tag cache directly;
+  cached executions do not appear as additional compilation attempts.
+
+### Compatibility
+
+- Timing output is strictly opt-in. Ordinary `check` output, ledger bytes,
+  hashes, ratchets, execution order, exit codes, and every stable machine JSON
+  schema remain unchanged.
+- Diagnostics are transient measurements, not deterministic evidence or a new
+  machine interface. Row time includes static, graph, and any executed-test
+  work; selected `check --only` does not split out its direct Go invocation as
+  a compile group.
+
 ## [0.9.0] - 2026-09-04
 
 ### Changed

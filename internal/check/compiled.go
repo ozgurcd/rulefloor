@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // GoTestExecutor runs one selected Go test in an isolated process.
@@ -21,10 +22,20 @@ type GoTestExecutor interface {
 // then starts a fresh process for every selected test. Its cache is intentionally
 // scoped to the executor lifetime; callers should create one per check operation.
 type CompiledGoTestExecutor struct {
-	runner   CommandRunner
-	tempDir  string
-	builds   map[goTestBuildKey]goTestBuild
-	nextName int
+	runner         CommandRunner
+	tempDir        string
+	builds         map[goTestBuildKey]goTestBuild
+	nextName       int
+	compileTimings []CompileTiming
+}
+
+// CompileTiming describes one package compilation attempted by a compiled
+// executor. Cached test executions do not add another entry.
+type CompileTiming struct {
+	Directory string
+	Tags      string
+	Duration  time.Duration
+	Succeeded bool
 }
 
 type goTestBuildKey struct {
@@ -61,6 +72,17 @@ func (e *CompiledGoTestExecutor) Run(ctx context.Context, testFile, functionName
 }
 
 func (e *CompiledGoTestExecutor) compile(ctx context.Context, key goTestBuildKey) goTestBuild {
+	started := time.Now()
+	succeeded := false
+	defer func() {
+		e.compileTimings = append(e.compileTimings, CompileTiming{
+			Directory: key.directory,
+			Tags:      key.tags,
+			Duration:  time.Since(started),
+			Succeeded: succeeded,
+		})
+	}()
+
 	if e.tempDir == "" {
 		tempDir, err := os.MkdirTemp("", "rulefloor-go-test-")
 		if err != nil {
@@ -83,11 +105,18 @@ func (e *CompiledGoTestExecutor) compile(ctx context.Context, key goTestBuildKey
 	args = append(args, ".")
 	output, err := e.runner.Run(ctx, key.directory, "go", args...)
 	if err == nil {
+		succeeded = true
 		return goTestBuild{binary: binary}
 	}
 
 	failure := interpretGoTestCompileFailure(ctx, output, err)
 	return goTestBuild{failure: &failure}
+}
+
+// CompileTimings returns a snapshot of package compilation timings in attempt
+// order. It is diagnostic data only and does not affect execution semantics.
+func (e *CompiledGoTestExecutor) CompileTimings() []CompileTiming {
+	return append([]CompileTiming(nil), e.compileTimings...)
 }
 
 // Close removes test binaries created by this executor.
