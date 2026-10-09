@@ -113,8 +113,8 @@ go install github.com/ozgurcd/rulefloor@latest
 Or build from source. A source build is not a shipped release binary even when
 a builder supplies a release-looking linker stamp: check `version --json` and
 expect `toolchain_version` to reveal `(devel)` when the Go toolchain has no
-module release identity. **Requires Go 1.27.0 or newer** — the module's
-`go` directive is `1.27.0`, the official baseline. A toolchain below it that
+module release identity. **Requires Go 1.27.2 or newer** — the module's
+`go` directive is `1.27.2`, the official baseline. A toolchain below it that
 cannot fetch Go 1.27 through `GOTOOLCHAIN=auto` will fail to build the tool,
 deliberately: an under-floor build environment should fail loudly, not
 produce a subtly different binary.
