@@ -283,6 +283,18 @@ func checkFileDigest(repo string, row *ledger.Row) (string, error) {
 func validateOperationRows(repo string, l *ledger.Ledger) error {
 	for i := range l.Rows {
 		r := &l.Rows[i]
+		// Operation fields must describe the same binding the CLI would derive.
+		// In particular, stable covered symbols cannot opt out of exact reach.
+		covered, policy, err := prepareCoveredSymbols("operations", repo, r.CoveredSymbols)
+		if err != nil {
+			return err
+		}
+		if policy != r.ReachabilityPolicy || !slices.Equal(covered, r.CoveredSymbols) {
+			return fmt.Errorf("changed protected binding for %s", r.ID)
+		}
+		if (!r.Armed() || policy != ledger.ReachabilityExact) && r.TestSymbol != "" {
+			return fmt.Errorf("unexpected protected test symbol for %s", r.ID)
+		}
 		if !r.Armed() {
 			continue
 		}

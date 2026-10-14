@@ -9,7 +9,102 @@ import (
 	"testing"
 
 	"github.com/ozgurcd/rulefloor/internal/ledger"
+	"github.com/ozgurcd/rulefloor/internal/reach"
 )
+
+func TestOperationsRefuseReachabilityMetadataBypass(t *testing.T) {
+	for _, mutation := range []string{"demotion", "declare-policy", "arm-policy", "mixed", "legacy-test", "declared-test", "wrong-test", "unresolved"} {
+		for _, command := range []string{"ops-validate", "ops-apply"} {
+			t.Run(mutation+"/"+command, func(t *testing.T) {
+				repo, _ := operationFixture(t, "R-1")
+				client := &fakeGraphClient{resolution: reach.ResolutionExact}
+				useGraphClient(t, client)
+				row := armedOperationFixture(t, repo, "R-1")
+				row.CoveredSymbols = []string{"fixture::Guard"}
+				row.ReachabilityPolicy = ledger.ReachabilityExact
+				row.TestSymbol = "fixture::TestRefreshSingleUse"
+				base := &ledger.Ledger{Floor: 1, HasRedProofs: true, Rows: []ledger.Row{row}}
+				if mutation == "declare-policy" || mutation == "declared-test" || mutation == "unresolved" {
+					base.Rows = nil
+					base.Floor = 0
+					row = declaredOperationRow("R-1")
+					row.CoveredSymbols = []string{"fixture::Guard"}
+					row.ReachabilityPolicy = ledger.ReachabilityExact
+				} else if mutation == "arm-policy" {
+					base.Rows[0] = declaredOperationRow("R-1")
+				}
+				base.MaintainRedProofs()
+				original := []byte(ledger.Serialize(base))
+				if err := os.WriteFile(ledger.Path(repo), original, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				previous := base.Find("R-1")
+				if previous != nil && previous.Armed() {
+					row.Rule = "The amended rule holds."
+				}
+				kind, err := operationKind(previous, row)
+				if err != nil {
+					t.Fatal(err)
+				}
+				check, err := checkFileDigest(repo, &row)
+				if err != nil {
+					t.Fatal(err)
+				}
+				set := operationSet{operationSchema, "baseline-1", string(original), digest(original), "source-1", "review-1", "authority-1", []floorOperation{{ID: row.ID, Kind: kind, Old: previous, New: row, OldFingerprints: fingerprints(previous), NewFingerprints: fingerprints(&row), CheckSHA: check}}}
+				valid := encodeOperationFixture(t, set)
+				next := &set.Operations[0].New
+				switch mutation {
+				case "demotion":
+					// Reviewer's exact example: only these two fields change.
+					next.Rule = previous.Rule
+					next.ReachabilityPolicy, next.TestSymbol = "", ""
+				case "declare-policy", "arm-policy":
+					next.ReachabilityPolicy, next.TestSymbol = "", ""
+				case "mixed":
+					next.CoveredSymbols = []string{"fixture::Guard", "legacy"}
+					next.ReachabilityPolicy, next.TestSymbol = "", ""
+				case "legacy-test":
+					next.CoveredSymbols = []string{"legacy"}
+					next.ReachabilityPolicy = ""
+				case "declared-test":
+					next.TestSymbol = "fixture::TestRefreshSingleUse"
+				case "wrong-test":
+					next.TestSymbol = "fixture::OtherTest"
+				case "unresolved":
+					client.err = &reach.EvidenceError{Kind: reach.ErrorUnavailable, Message: "protected symbol resolution unavailable"}
+				}
+				set.Operations[0].NewFingerprints = fingerprints(next)
+				bad := encodeOperationFixture(t, set)
+				fragment := filepath.Join(repo, "operations.json")
+				if err := os.WriteFile(fragment, bad, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				args := []string{command, "--repo", repo, "--operations", fragment, "--original-id", "baseline-1", "--source-id", "source-1", "--review-id", "review-1", "--authority", "authority-1"}
+				var out, stderr bytes.Buffer
+				if code := run(args, &out, &stderr); code == 0 {
+					t.Fatal("reachability metadata bypass accepted")
+				}
+				after, err := os.ReadFile(ledger.Path(repo))
+				if err != nil || !bytes.Equal(after, original) {
+					t.Fatal("refusal changed ledger")
+				}
+				retained, err := os.ReadFile(fragment)
+				if err != nil || !bytes.Equal(retained, bad) {
+					t.Fatal("refusal consumed fragment")
+				}
+				client.err = nil
+				if err := os.WriteFile(fragment, valid, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				out.Reset()
+				stderr.Reset()
+				if code := run(args, &out, &stderr); code != 0 {
+					t.Fatalf("valid exact control refused: %s", stderr.String())
+				}
+			})
+		}
+	}
+}
 
 func TestOperationCLIDiscovery(t *testing.T) {
 	for _, name := range []string{"ops-emit", "ops-validate", "ops-apply", "ops-overlay"} {
