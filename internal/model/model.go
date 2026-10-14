@@ -35,6 +35,9 @@ type Row struct {
 func (r *Row) Armed() bool { return r.Check != "NONE" }
 
 type Ledger struct {
+	// OriginalBytes is the expected-old snapshot captured by Load. Nil means
+	// create-only; parsing a document alone never grants overwrite authority.
+	OriginalBytes    []byte
 	Floor            int
 	Rows             []Row
 	RedProofs        int

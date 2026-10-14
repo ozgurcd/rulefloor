@@ -29,6 +29,7 @@ check OK: 2 rows (2 armed), FLOOR 2, RED-PROOFS 2 (measured 2)
 - [Concepts](#concepts)
 - [Command reference](#command-reference)
 - [Review ledger changes](#review-ledger-changes)
+- [Immutable floor operations](#immutable-floor-operations)
 - [Covered product symbols](#covered-product-symbols)
 - [Binary capabilities](#binary-capabilities)
 - [Machine-readable validation](#machine-readable-validation)
@@ -370,6 +371,10 @@ Every command takes `--repo PATH` (default `.`).
 | `validate ID --mode static\|execute --json` | Validate exactly one rule and emit `rulefloor.validation.v1` JSON. Optional execute-only `--profile NAME` selects the declared profile; optional `--tags TAGS` supplies validated Go build tags. |
 | `capabilities [--json]` | Describe features compiled into this binary without reading a repository or ledger. |
 | `version --json` | Emit `rulefloor.version.v1` JSON using the same release-stamped version as human output. |
+| `ops-emit --baseline PATH --original-id ID --source-id ID --review-id ID --authority ID` | Emit retained immutable floor operations from a baseline ledger and the current tool-written ledger. |
+| `ops-validate --operations PATH --original-id ID --source-id ID --review-id ID --authority ID` | Validate the entire set against current expected-old logical values and source; static diagnostic only. |
+| `ops-apply --operations PATH --original-id ID --source-id ID --review-id ID --authority ID` | Validate all operations, then atomically replace the expected-old ledger bytes and sync them. Never consumes fragments. |
+| `ops-overlay --operations PATH --original-id ID --source-id ID --review-id ID --authority ID` | Emit proposed ledger bytes as explicitly diagnostic JSON; never writes canonical evidence. |
 
 Refusals you will meet, all deliberate:
 
@@ -487,6 +492,107 @@ When `--proof-kind` is omitted, a successful `--run` observation is stored as
 `manual_observation`; an explicit supported kind remains available.
 Rulefloor does not infer which assertion failed and does not claim the observed
 failure proves the natural-language rule.
+
+## Immutable floor operations
+
+These commands prepare review inputs for an external integrator. They manage
+only floor data: no Git, queue, witness, manifest, signing, or publication
+operation is implied. Existing consumer commit ordering remains its own rule.
+They do not change the six-column ledger or the legacy mutation commands.
+
+Keep a baseline ledger before using ordinary Rulefloor commands in a private
+source checkout. `ops-emit` compares that baseline with the resulting
+tool-written ledger and writes one deterministic `rulefloor.operations.v1`
+document to stdout. Retain those bytes as a fragment through review and
+application. Nothing marks a fragment consumed or deletes it.
+
+All four commands require the same original, source, review and authority
+identities. These are caller-supplied seals that must match on replay. They
+are not signatures or permission grants. The caller must authenticate them,
+seal the source snapshot, and bind the document's digest to final review.
+Changing both a fragment and every caller-supplied identity is outside this
+codec's authenticity guarantee. No real credentials are needed by Rulefloor.
+
+The operation document is CLOSED. Every field is required; unknown fields,
+duplicate JSON member names, missing fields, null required values, unsupported
+versions, trailing documents, malformed/truncated data and inputs above 16 MiB
+refuse. Empty operation arrays are no-ops and refuse. Its fields are:
+
+- `schema_version`: exactly `rulefloor.operations.v1`.
+- `original_identity`, `source_identity`, `review_identity`, `authority`:
+  nonempty caller seals.
+- `original_ledger`: retained exact baseline bytes as a JSON string;
+  `original_sha256`: full SHA-256 of those UTF-8 bytes.
+- `operations`: nonempty array of closed operation objects. Each contains
+  `rule_id`, `kind`, `expected_old` (a row or explicit null for an addition),
+  `new`, `old_fingerprints`, `new_fingerprints`, and `check_file_sha256`.
+
+Rows carry all the logical fields, with their exact Go field names: `ID`,
+`Rule`, `EnforcedBy`, `Check`, `RedProof`, `Hash`, `CoveredSymbols` (an array,
+including []), `ExecutionPolicy`, `ReachabilityPolicy`, and `TestSymbol`.
+Fingerprint objects contain `sentence_sha256`, `test_fingerprint`,
+`proof_sha256` and `binding_sha256`. Sentence and proof fingerprints hash the
+exact parsed cell values; the test fingerprint remains the legacy 12-character
+span hash. Binding SHA-256 hashes deterministic JSON for the complete logical
+row with Rule, RedProof and Hash replaced by empty strings. A null old row
+has four empty fingerprint strings. Armed new rows also bind the full current
+check-file SHA-256; unarmed rows use an empty check-file string. Helpers and
+other source files remain the external source seal's responsibility.
+
+The closed kinds are `declare`, `arm`, `amend`, `rehash` and `prove`. An addition
+must first be a declaration. An arm cannot rewrite the sentence. Amendments
+preserve the proof, test hash and check; a rehash changes the span fingerprint
+without changing proof or binding. Proof changes preserve other values and
+require an exact supersession link when the previous proof is genuine. The
+exceptional legacy `prove --force` path is not an operation kind. Deletion,
+historical fixture repair, combined changes on one ID and header-only changes
+are unsupported. Use separately reviewed sequential operations for separate
+changes to one ID; repeating an ID within one set refuses.
+
+Validation checks the retained baseline, current ratchets, each target's exact
+old logical values, all fingerprints, and the resulting ledger's static
+bindings. It reuses tag extraction, restricted/skip checks, proof parsing,
+execution-policy interpretation, and exact protected-symbol reach. It never
+executes tests or supplies native accepted evidence. Disjoint current rows
+are retained. A changed target, check file, proof, binding or seal refuses;
+an unrelated valid disjoint operation can be applied without losing its rows
+or raises. The final headers become max(previous ratchet, required final
+count). Invalid prior rows/headers refuse before raising anything. Untouched
+ledger lines retain their exact bytes; new IDs are inserted in lexical order.
+
+`ops-overlay` emits `rulefloor.overlay.v1` with `diagnostic_only: true`,
+`accepted_evidence: false`, and the proposed `ledger` string. It is feedback,
+never a replacement for final candidate review or the native repository gate.
+
+### Atomic expected-old writes and failure settlement
+
+Legacy mutations now retain the loaded ledger's exact bytes and replace only
+that snapshot. Initialization is create-only. A stale concurrent mutation
+refuses instead of overwriting another writer. Successful ledger bytes and
+ordinary legacy output remain unchanged.
+
+Cooperating Rulefloor writers take a nonblocking advisory lock on the stable
+repository-directory inode. An occupied lock refuses immediately. The writer
+checks expected-old bytes, creates a same-directory temporary file, preserves
+the prior permission bits, writes and syncs the entire new file, closes it,
+rechecks path and expected-old bytes, renames atomically, then syncs the parent
+directory. No partial ledger is published. Failed temporary files are retained
+as `.rulefloor-pending-*` for diagnosis; the owner controls their disposition.
+
+A failure before rename leaves the prior ledger unchanged. A directory-sync
+failure after rename returns a `ReplacementError` with `installed=true` and
+phase `directory-sync`; the complete new bytes are visible, but crash durability
+is uncertain. It never reports success, blindly retries or rolls back an
+installed replacement. Inspect exact bytes and settle the uncertain operation
+before continuing. It cannot promise the old bytes remain after a failure that
+occurs after the atomic publication point.
+
+The lock serializes cooperating writers, not arbitrary filesystem editors.
+POSIX rename has no compare-and-swap primitive against uncooperative writers;
+hostile root/path substitution and source mutation require external filesystem
+mediation and sealed snapshots. Native final review and gates remain required.
+Rulefloor claims neither authenticated approval nor a hardware persistence
+guarantee beyond successful filesystem sync calls.
 
 ## Covered product symbols
 

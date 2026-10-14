@@ -44,22 +44,16 @@ func Load(repo string) (*Ledger, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %v", p, err)
 	}
+	l.OriginalBytes = append([]byte{}, data...)
 	return l, nil
 }
 
 func Save(repo string, l *Ledger) error {
-	p := Path(repo)
-	root, err := repository.CanonicalRoot(repo)
-	if err != nil {
-		return fmt.Errorf("cannot write %s: %v", p, err)
+	next := []byte(Serialize(l))
+	if err := ReplaceExpected(repo, l.OriginalBytes, next); err != nil {
+		return err
 	}
-	resolved, err := repository.ConfinedWritePath(root, Filename)
-	if err != nil {
-		return fmt.Errorf("cannot write %s: %v", p, err)
-	}
-	if err := os.WriteFile(resolved, []byte(Serialize(l)), 0o644); err != nil {
-		return fmt.Errorf("cannot write %s: %v", p, err)
-	}
+	l.OriginalBytes = append([]byte{}, next...)
 	return nil
 }
 

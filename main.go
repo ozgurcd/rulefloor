@@ -44,6 +44,8 @@ Usage:
                                               [--run-profile NAME [--tags T]] [--only ID] [--timings]
   rulefloor validate ID --repo PATH --mode static|execute [--profile NAME] [--tags T] --json
   rulefloor capabilities [--json]
+  rulefloor ops-emit --baseline PATH --original-id ID --source-id ID --review-id ID --authority ID [--repo PATH]
+  rulefloor ops-validate|ops-apply|ops-overlay --operations PATH --original-id ID --source-id ID --review-id ID --authority ID [--repo PATH]
   rulefloor version [--json]                  (also: rulefloor --version)
 
 Exit codes: 0 ok, 1 check failure or refusal, 2 fatal
@@ -56,6 +58,34 @@ rehash accepts reviewed source drift; prove records red-proof debt.
 `
 
 var commandHelp = map[string]string{
+	"ops-emit": `Usage: rulefloor ops-emit --baseline PATH --original-id ID --source-id ID --review-id ID --authority ID [--repo PATH]
+
+Emit one immutable rulefloor.operations.v1 document from a retained baseline
+and the current tool-written ledger. No input is consumed. Identities are
+caller-supplied seals, not authenticated authorization. Unsupported deletion,
+combined changes, no-op sets, lowered headers and invalid bindings refuse.
+`,
+	"ops-validate": `Usage: rulefloor ops-validate --operations PATH --original-id ID --source-id ID --review-id ID --authority ID [--repo PATH]
+
+Validate expected-old logical rows, original bytes, seals, fingerprints,
+proof constraints, current source and ratchets. Static diagnostic only;
+no test execution and no accepted native evidence. Fragments remain intact.
+`,
+	"ops-apply": `Usage: rulefloor ops-apply --operations PATH --original-id ID --source-id ID --review-id ID --authority ID [--repo PATH]
+
+Validate the whole set, then replace expected-old ledger bytes atomically.
+Cooperating writers take a nonblocking directory lock; file and directory
+sync precede success. A directory-sync error reports installed=true: the
+whole new ledger is visible but durability is uncertain; inspect before retry.
+External mediation is required against noncooperating filesystem writers.
+No fragment is consumed. Native final review/gates remain required.
+`,
+	"ops-overlay": `Usage: rulefloor ops-overlay --operations PATH --original-id ID --source-id ID --review-id ID --authority ID [--repo PATH]
+
+Emit rulefloor.overlay.v1 JSON containing a proposed ledger and explicit
+diagnostic_only=true, accepted_evidence=false. Never writes the canonical
+ledger, executes a test, consumes fragments or creates accepted evidence.
+`,
 	"arm": `Usage: rulefloor arm ID --check "file @ profile" --red-proof TEXT [--proof-kind KIND] [--proof-ref URL] [--covers SYMBOLS] [--execution static|execute] [--repo PATH]
 
 Bind a declared rule to its tagged check and record an observed red proof.
@@ -154,6 +184,12 @@ func (e silentExit) Error() string { return "" }
 
 // flagTakesValue lists every flag; false marks booleans.
 var flagTakesValue = map[string]bool{
+	"--baseline":    true,
+	"--operations":  true,
+	"--original-id": true,
+	"--source-id":   true,
+	"--review-id":   true,
+	"--authority":   true,
 	"--repo":        true,
 	"--id":          true,
 	"--check":       true,
@@ -193,6 +229,10 @@ type commandSpec struct {
 }
 
 var commandSpecs = map[string]commandSpec{
+	"ops-emit":     {0, operationFlags(true), func(c commandInvocation) error { return cmdOperations(c, "ops-emit") }},
+	"ops-validate": {0, operationFlags(false), func(c commandInvocation) error { return cmdOperations(c, "ops-validate") }},
+	"ops-apply":    {0, operationFlags(false), func(c commandInvocation) error { return cmdOperations(c, "ops-apply") }},
+	"ops-overlay":  {0, operationFlags(false), func(c commandInvocation) error { return cmdOperations(c, "ops-overlay") }},
 	"init": {0, map[string]bool{"--repo": true}, func(c commandInvocation) error {
 		return cmdInit(c.repo, c.stdout)
 	}},
@@ -349,6 +389,22 @@ func dispatch(args []string, stdout io.Writer) error {
 	}
 	if len(args) == 2 && args[1] == "--help" {
 		return printCommandHelp(cmd, stdout)
+	}
+	if strings.HasPrefix(cmd, "ops-") {
+		seen := map[string]bool{}
+		for i := 1; i < len(args); i++ {
+			name, _, hasEq := strings.Cut(args[i], "=")
+			if !strings.HasPrefix(name, "--") {
+				continue
+			}
+			if seen[name] {
+				return fatalf("duplicate operation flag %s", name)
+			}
+			seen[name] = true
+			if flagTakesValue[name] && !hasEq {
+				i++
+			}
+		}
 	}
 	flags, pos, err := parseArgs(args[1:])
 	if err != nil {
