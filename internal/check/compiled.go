@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -27,7 +28,12 @@ type CompiledGoTestExecutor struct {
 	builds         map[goTestBuildKey]goTestBuild
 	nextName       int
 	compileTimings []CompileTiming
+	compileJobs    int
 }
+
+// SetCompileJobs caps `go test -c` build parallelism (-p). Zero keeps the Go
+// default. Call before the first Run.
+func (e *CompiledGoTestExecutor) SetCompileJobs(jobs int) { e.compileJobs = jobs }
 
 // CompileTiming describes one package compilation attempted by a compiled
 // executor. Cached test executions do not add another entry.
@@ -98,7 +104,11 @@ func (e *CompiledGoTestExecutor) compile(ctx context.Context, key goTestBuildKey
 		name += ".exe"
 	}
 	binary := filepath.Join(e.tempDir, name)
-	args := []string{"test", "-c", "-o", binary}
+	args := []string{"test", "-c"}
+	if e.compileJobs > 0 {
+		args = append(args, "-p", strconv.Itoa(e.compileJobs))
+	}
+	args = append(args, "-o", binary)
 	if key.tags != "" {
 		args = append(args, "-tags", key.tags)
 	}

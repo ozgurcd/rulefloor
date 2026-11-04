@@ -24,11 +24,18 @@ type checkOptions struct {
 	Tags       string
 	OnlyID     string
 	Timings    bool
+	// Light skips executing bound tests (ledger, hash, static and graph checks
+	// only). The default stays the full gate.
+	Light  bool
+	Tuning checkTuning
 }
 
 func cmdCheck(repo string, options checkOptions, stdout io.Writer) error {
 	if err := checkengine.ValidateBuildTags(options.Tags); err != nil {
 		return fatalf("check: %v", err)
+	}
+	if options.Light && options.RunProfile != "" {
+		return fatalf("check: --light cannot be combined with --run-profile (a profile run executes tests)")
 	}
 	if options.OnlyID != "" {
 		if options.AllSpec != "" || options.ReportPath != "" {
@@ -64,7 +71,7 @@ func cmdCheck(repo string, options checkOptions, stdout io.Writer) error {
 	total := 0
 	for _, target := range targets {
 		fmt.Fprintf(stdout, "== %s ==\n", target)
-		n, err := checkRepo(target, checkOptions{Timings: options.Timings}, stdout)
+		n, err := checkRepo(target, checkOptions{Timings: options.Timings, Light: options.Light, Tuning: options.Tuning}, stdout)
 		if err != nil {
 			var exit exitErr
 			if errors.As(err, &exit) {
@@ -101,11 +108,21 @@ func checkOnly(repo, id string, options checkOptions, stdout io.Writer) error {
 	if options.RunProfile != "" && options.RunProfile != binding.Profile {
 		return fatalf("check: --only %s requested profile %q but the row declares %q", id, options.RunProfile, binding.Profile)
 	}
-	rowStarted := timer.startRule()
-	problems, err := checkRow(repo, row, rowCheckOptions{
+	rowOptions := rowCheckOptions{
 		runProfile: options.RunProfile, tags: options.Tags, reachVerifier: newGraphClient(),
-	})
+		light: options.Light, lightSkipped: new(int),
+	}
+	if options.Tuning.active() && !options.Light {
+		compiled, executor := newCheckExecutor(options.Tuning)
+		defer compiled.Close()
+		rowOptions.goExecutor = executor
+	}
+	rowStarted := timer.startRule()
+	problems, err := checkRow(repo, row, rowOptions)
 	timer.finishRule(id, rowStarted)
+	if options.Light {
+		fmt.Fprintln(stdout, lightSummary(*rowOptions.lightSkipped))
+	}
 	if err != nil {
 		return err
 	}
@@ -153,8 +170,10 @@ func checkRepo(repo string, options checkOptions, stdout io.Writer) (int, error)
 	}
 	armed := 0
 	reachVerifier := newGraphClient()
-	goExecutor = checkengine.NewCompiledGoTestExecutor(checkengine.ExecRunner{})
+	var rowExecutor checkengine.GoTestExecutor
+	goExecutor, rowExecutor = newCheckExecutor(options.Tuning)
 	defer goExecutor.Close()
+	lightSkipped := 0
 	for i := range model.Rows {
 		row := &model.Rows[i]
 		if !row.Armed() {
@@ -165,7 +184,8 @@ func checkRepo(repo string, options checkOptions, stdout io.Writer) (int, error)
 		rowStarted := timer.startRule()
 		rowProblems, err := checkRow(repo, row, rowCheckOptions{
 			report: playwrightReport, haveReport: options.ReportPath != "", runProfile: options.RunProfile, tags: options.Tags,
-			reachVerifier: reachVerifier, goExecutor: goExecutor,
+			reachVerifier: reachVerifier, goExecutor: rowExecutor,
+			light: options.Light, lightSkipped: &lightSkipped,
 		})
 		timer.finishRule(row.ID, rowStarted)
 		if err != nil {
@@ -185,6 +205,9 @@ func checkRepo(repo string, options checkOptions, stdout io.Writer) (int, error)
 	}
 	for _, orphan := range orphans {
 		problem("%s", orphan)
+	}
+	if options.Light {
+		fmt.Fprintln(stdout, lightSummary(lightSkipped))
 	}
 	if problems == 0 {
 		if model.HasRedProofs {
@@ -209,6 +232,8 @@ type rowCheckOptions struct {
 	tags          string
 	reachVerifier reach.Verifier
 	goExecutor    checkengine.GoTestExecutor
+	light         bool
+	lightSkipped  *int
 }
 
 func checkRow(repo string, row *Row, options rowCheckOptions) ([]string, error) {
@@ -286,6 +311,10 @@ func executeRowBinding(testFile string, binding rulemodel.Binding, evaluation ch
 		return "", nil
 	}
 	if binding.Execution == rulemodel.ExecutionExecute {
+		if options.light {
+			*options.lightSkipped++
+			return "", nil
+		}
 		return runGoTestWith(options.goExecutor, testFile, evaluation.Ref.FuncName, "", false)
 	}
 	if options.runProfile != "" && binding.Profile == options.runProfile {
@@ -330,6 +359,9 @@ func reportGoTestExecution(execution checkengine.Execution, functionName string,
 	}
 	if execution.Reason == "toolchain_unavailable" {
 		return "", fatalf("CANNOT-EVALUATE: go toolchain not found: %s", execution.Message)
+	}
+	if execution.Reason == checkengine.LoadGuardReason {
+		return "", fatalf("CANNOT-EVALUATE: %s", execution.Message)
 	}
 	if execution.Reason == "test_skipped" && skipIsFatal {
 		return "", fatalf("CANNOT-EVALUATE: %s SKIPPED under --run-profile — its precondition is absent and a skip is not a proof:\n%s", functionName, execution.Message)

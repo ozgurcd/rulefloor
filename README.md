@@ -366,7 +366,7 @@ Every command takes `--repo PATH` (default `.`).
 | `ledger-diff --base REF [--json]` | Compare the current logical ledger with its committed form at `REF`. Classify sentence, binding, proof, covered-symbol, and test-fingerprint changes separately. Differences exit 1; unavailable evidence exits 2. |
 | `repair-fixture-row ID` | One-time migration for an unarmed row explicitly described as `Fixture marker, not a rule:`. Refuses if the ID is still a real extractor-discovered tag; removes the row and records its ID in `REPAIRED-FIXTURES` so FLOOR is preserved. |
 | `covers [--json]` | Read every rule ID and its optional covered-symbol set. JSON is a deterministic `rulefloor.covers.v1` document. |
-| `check [--report pw.json] [--all "repo1,repo2"] [--timings]` | Verify the complete repository gate (below). `--timings` appends bounded human performance diagnostics. |
+| `check [--report pw.json] [--all "repo1,repo2"] [--timings] [--light] [--max-load N] [--load-wait D] [--load-poll D] [--jobs N]` | Verify the complete repository gate (below). `--timings` appends bounded human performance diagnostics. `--light` skips executing bound tests (routine use, not a gate); `--max-load`/`--jobs` protect a busy host. |
 | `check --only ID [--timings]` | Fast human feedback for one armed binding. This intentionally omits other rows, global ratchet evaluation, and orphan scanning, so it never replaces full `check`. A matching `--run-profile` executes a non-unit Go row. |
 | `validate ID --mode static\|execute --json` | Validate exactly one rule and emit `rulefloor.validation.v1` JSON. Optional execute-only `--profile NAME` selects the declared profile; optional `--tags TAGS` supplies validated Go build tags. |
 | `capabilities [--json]` | Describe features compiled into this binary without reading a repository or ledger. |
@@ -845,6 +845,30 @@ Timing values are intentionally not machine contracts: they vary with host
 load, Go caches, graph state, and test behavior. The flag does not change rule
 ordering, evaluation, exit codes, ledger bytes, or any versioned JSON schema.
 Normal `check` output remains unchanged when the flag is absent.
+
+**`--light`** is the routine mode (RF-01). It runs everything ordinary `check`
+runs — ledger rows, FLOOR and RED-PROOFS ratchets, test-span fingerprints (the
+hash validation), protected-symbol graph evidence, and orphan discovery — but
+does not execute the bound Go tests, so it starts no test compile and no test
+processes. It prints `LIGHT: N test execution(s) skipped; … not a gate`. Gates
+must run ordinary `check` (no `--light`), which still executes every armed
+suite. `--light` cannot combine with `--run-profile`; it also skips execution
+under `--only` and `--all`.
+
+**Host protection** applies to executed runs and is off unless configured. A
+flag wins over its environment variable:
+
+| Flag | Variable | Meaning |
+| --- | --- | --- |
+| `--max-load N` | `RULEFLOOR_MAX_LOAD` | Before each test execution (and its lazy compile) wait while the one-minute load average is `>= N`. |
+| `--load-wait D` | `RULEFLOOR_LOAD_WAIT` | Give up after `D` (default `5m`): exit 2 `CANNOT-EVALUATE`, nothing executed. |
+| `--load-poll D` | `RULEFLOOR_LOAD_POLL` | Re-check interval (default `5s`). |
+| `--jobs N` | `RULEFLOOR_JOBS` | Cap `go test -c` build parallelism (`-p N`). |
+
+Load is read from `/proc/loadavg` or `sysctl -n vm.loadavg`; if it cannot be
+read while a guard is set, the check stops rather than passing unguarded.
+Invalid values exit 2. `--max-load` applies to `check` only, not `validate`
+or `prove --run`.
 
 ## Wiring into your entrypoints
 

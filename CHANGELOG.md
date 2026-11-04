@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `rulefloor check --light` validates the ledger, ratchets, test-span hashes,
+  graph evidence and orphans without executing the bound Go tests, for routine
+  use. It labels its output "not a gate"; ordinary `check` still runs every armed
+  suite and remains the gate form (RF-01).
+- `check --max-load N` / `RULEFLOOR_MAX_LOAD` waits before each test execution
+  while load1 is at or above N, bounded by `--load-wait` (default 5m, then exit 2
+  `CANNOT-EVALUATE`) and polled every `--load-poll` (default 5s). `--jobs N` /
+  `RULEFLOOR_JOBS` caps `go test -c` build parallelism. All are off unless set.
+
 ## [0.9.1] - 2026-09-04
 
 ### Added
