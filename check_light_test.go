@@ -1,6 +1,7 @@
 package main
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -28,9 +29,35 @@ func TestCheckLightSkipsExecutionAndSaysSo(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("light check must not execute the suite: code=%d\n%s", code, out)
 	}
-	for _, want := range []string{"PASS JSON-VALIDATE-1", "check OK", "LIGHT", "1 test execution(s) skipped", "not a gate"} {
+	for _, want := range []string{"PASS JSON-VALIDATE-1", "light check OK (armed suites NOT run): ", "LIGHT", "1 test execution(s) skipped", "not a gate"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("light output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// gateEvidence is the pattern the identuum gate witnesses (gate-witness.sh
+// EVIDENCE_RE, lictor internal/witness) use to accept a rulefloor pass.
+var gateEvidence = regexp.MustCompile(`(?m)^check OK:|^check FAILED:`)
+
+var lightPass = regexp.MustCompile(`(?m)^light (selected )?check OK \(armed suites? NOT run`)
+
+func TestCheckLightOutputNeverMatchesGatePattern(t *testing.T) {
+	repo := newValidationGoRepo(t, "unit")
+	if out := mustRun(t, "check", "--repo", repo); !gateEvidence.MatchString(out) {
+		t.Fatalf("full check must match the gate pattern:\n%s", out)
+	}
+	for _, args := range [][]string{
+		{"check", "--light", "--repo", repo},
+		{"check", "--light", "--only", "JSON-VALIDATE-1", "--repo", repo},
+		{"check", "--light", "--all", repo},
+	} {
+		out := mustRun(t, args...)
+		if gateEvidence.MatchString(out) || strings.Contains(out, "check OK:") {
+			t.Fatalf("%v: light output matches the gate pattern:\n%s", args, out)
+		}
+		if !lightPass.MatchString(out) {
+			t.Fatalf("%v: light output lacks its own pass line:\n%s", args, out)
 		}
 	}
 }

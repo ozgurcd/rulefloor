@@ -850,7 +850,9 @@ Normal `check` output remains unchanged when the flag is absent.
 runs — ledger rows, FLOOR and RED-PROOFS ratchets, test-span fingerprints (the
 hash validation), protected-symbol graph evidence, and orphan discovery — but
 does not execute the bound Go tests, so it starts no test compile and no test
-processes. It prints `LIGHT: N test execution(s) skipped; … not a gate`. Gates
+processes. It prints `LIGHT: N test execution(s) skipped; … not a gate` and ends
+with `light check OK (armed suites NOT run): …`, never the gate's `check OK:`
+line, so a gate pattern anchored on `^check OK:` cannot accept it. Gates
 must run ordinary `check` (no `--light`), which still executes every armed
 suite. `--light` cannot combine with `--run-profile`; it also skips execution
 under `--only` and `--all`.

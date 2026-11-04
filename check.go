@@ -132,7 +132,11 @@ func checkOnly(repo, id string, options checkOptions, stdout io.Writer) error {
 		}
 		return failf("check --only FAILED: %d problem(s) for %s", len(problems), id)
 	}
-	fmt.Fprintf(stdout, "PASS %s (%s)\nselected check OK (not a full repository gate)\n", id, row.Check)
+	selected := "selected check OK (not a full repository gate)"
+	if options.Light {
+		selected = "light selected check OK (armed suite NOT run; not a gate)"
+	}
+	fmt.Fprintf(stdout, "PASS %s (%s)\n%s\n", id, row.Check, selected)
 	return nil
 }
 
@@ -210,16 +214,17 @@ func checkRepo(repo string, options checkOptions, stdout io.Writer) (int, error)
 		fmt.Fprintln(stdout, lightSummary(lightSkipped))
 	}
 	if problems == 0 {
+		ok := passPrefix(options.Light)
 		if model.HasRedProofs {
 			if len(model.RepairedFixtures) > 0 {
-				fmt.Fprintf(stdout, "check OK: %d rows + %d repaired fixtures (%d armed), FLOOR %d, RED-PROOFS %d (measured %d)\n",
+				fmt.Fprintf(stdout, ok+"%d rows + %d repaired fixtures (%d armed), FLOOR %d, RED-PROOFS %d (measured %d)\n",
 					len(model.Rows), len(model.RepairedFixtures), armed, model.Floor, model.RedProofs, model.measuredRedProofs())
 			} else {
-				fmt.Fprintf(stdout, "check OK: %d rows (%d armed), FLOOR %d, RED-PROOFS %d (measured %d)\n",
+				fmt.Fprintf(stdout, ok+"%d rows (%d armed), FLOOR %d, RED-PROOFS %d (measured %d)\n",
 					len(model.Rows), armed, model.Floor, model.RedProofs, model.measuredRedProofs())
 			}
 		} else {
-			fmt.Fprintf(stdout, "check OK: %d rows (%d armed), FLOOR %d\n", len(model.Rows), armed, model.Floor)
+			fmt.Fprintf(stdout, ok+"%d rows (%d armed), FLOOR %d\n", len(model.Rows), armed, model.Floor)
 		}
 	}
 	return problems, nil

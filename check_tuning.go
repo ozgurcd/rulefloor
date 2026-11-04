@@ -98,6 +98,15 @@ func newCheckExecutor(t checkTuning) (*checkengine.CompiledGoTestExecutor, check
 	return compiled, compiled
 }
 
+// passPrefix is the final pass-line prefix. Gate witnesses accept ^check OK:, so
+// a light run must never print it.
+func passPrefix(light bool) string {
+	if light {
+		return "light check OK (armed suites NOT run): "
+	}
+	return "check OK: "
+}
+
 func lightSummary(skipped int) string {
 	return fmt.Sprintf("LIGHT: %d test execution(s) skipped; ledger, hash, static and graph checks only — not a gate (run without --light)", skipped)
 }
