@@ -336,6 +336,51 @@ func TestRunBoundedLeavesNoGoroutineOnAnyPath(t *testing.T) {
 	}
 }
 
+type recordedForward struct {
+	kills  int
+	raised []os.Signal
+}
+
+func newRecordedWatch(record *recordedForward) *terminationWatch {
+	return &terminationWatch{
+		received: make(chan os.Signal, 1),
+		quit:     make(chan struct{}),
+		finished: make(chan struct{}),
+		kill:     func() { record.kills++ },
+		raise:    func(value os.Signal) { record.raised = append(record.raised, value) },
+	}
+}
+
+// A signal can arrive after the watcher goroutine has ended and before the
+// notification stops. The stop function must still forward it.
+func TestTerminationWatchStopLosesNoSignal(t *testing.T) {
+	var late recordedForward
+	watch := newRecordedWatch(&late)
+	close(watch.finished) // the watcher has already ended
+	watch.received <- syscall.SIGTERM
+	watch.stop()
+	if late.kills != 1 || len(late.raised) != 1 || late.raised[0] != syscall.SIGTERM {
+		t.Fatalf("signal left in the channel at stop: kills %d, raised %v", late.kills, late.raised)
+	}
+
+	var running recordedForward
+	watch = newRecordedWatch(&running)
+	go watch.run()
+	watch.received <- syscall.SIGINT
+	watch.stop()
+	if running.kills != 1 || len(running.raised) != 1 || running.raised[0] != syscall.SIGINT {
+		t.Fatalf("signal during the watch: kills %d, raised %v, want one forward", running.kills, running.raised)
+	}
+
+	var quiet recordedForward
+	watch = newRecordedWatch(&quiet)
+	go watch.run()
+	watch.stop()
+	if quiet.kills != 0 || len(quiet.raised) != 0 {
+		t.Fatalf("no signal was sent: kills %d, raised %v", quiet.kills, quiet.raised)
+	}
+}
+
 func TestTerminationSignalStopsTheChildGroup(t *testing.T) {
 	ready := filepath.Join(t.TempDir(), "ready")
 	host := exec.Command(os.Args[0], helperArgs...)

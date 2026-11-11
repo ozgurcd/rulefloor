@@ -51,23 +51,58 @@ func forwardTermination(command *exec.Cmd) func() {
 	if len(watched) == 0 {
 		return func() {}
 	}
-	received := make(chan os.Signal, 1)
-	signal.Notify(received, watched...)
-	stop := make(chan struct{})
-	finished := make(chan struct{})
-	go func() {
-		defer close(finished)
-		select {
-		case value := <-received:
-			_ = killProcessGroup(command.Process)
+	watch := &terminationWatch{
+		received: make(chan os.Signal, 1),
+		quit:     make(chan struct{}),
+		finished: make(chan struct{}),
+		kill:     func() { _ = killProcessGroup(command.Process) },
+		raise: func(value os.Signal) {
 			signal.Reset(value)
 			_ = syscall.Kill(os.Getpid(), value.(syscall.Signal))
-		case <-stop:
-		}
-	}()
-	return func() {
-		close(stop)
-		<-finished
-		signal.Stop(received)
+		},
+	}
+	signal.Notify(watch.received, watched...)
+	go watch.run()
+	return watch.stop
+}
+
+// terminationWatch forwards one termination signal: it kills the child's
+// group, then raises the signal against Rulefloor itself. Each watch has its
+// own channel, so watches of concurrent children do not share state; a signal
+// reaches every one of them and each kills its own group.
+type terminationWatch struct {
+	received chan os.Signal
+	quit     chan struct{}
+	finished chan struct{}
+	kill     func()
+	raise    func(os.Signal)
+}
+
+func (w *terminationWatch) run() {
+	defer close(w.finished)
+	select {
+	case value := <-w.received:
+		w.forward(value)
+	case <-w.quit:
+	}
+}
+
+func (w *terminationWatch) forward(value os.Signal) {
+	w.kill()
+	w.raise(value)
+}
+
+// stop ends the watch and loses no signal. After signal.Stop returns nothing
+// more is delivered, so a signal that the ended goroutine did not take is
+// still in the channel; it is forwarded here. The group kill is a no-op once
+// the child is collected.
+func (w *terminationWatch) stop() {
+	signal.Stop(w.received)
+	close(w.quit)
+	<-w.finished
+	select {
+	case value := <-w.received:
+		w.forward(value)
+	default:
 	}
 }
