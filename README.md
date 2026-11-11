@@ -710,7 +710,7 @@ Repository status remains the responsibility of `check` and `validate`.
 `rulefloor version --json` writes one JSON document to stdout:
 
 ```json
-{"schema_version":"rulefloor.version.v1","version":"v0.9.2","toolchain_version":"v0.9.2","version_agreement":"pass"}
+{"schema_version":"rulefloor.version.v1","version":"v0.9.3","toolchain_version":"v0.9.3","version_agreement":"pass"}
 ```
 
 `rulefloor.version.v1`, `rulefloor.validation.v1`,
