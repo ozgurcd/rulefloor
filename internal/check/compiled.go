@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -73,8 +72,8 @@ func (e *CompiledGoTestExecutor) Run(ctx context.Context, testFile, functionName
 	}
 
 	args := []string{"-test.count=1", "-test.v", "-test.paniconexit0", "-test.timeout=10m0s", "-test.run", "^" + functionName + "$"}
-	output, err := e.runner.Run(ctx, key.directory, build.binary, args...)
-	return interpretGoTestResult(ctx, output, err, functionName, false)
+	capture, err := runBounded(ctx, e.runner, key.directory, build.binary, args, goTestMarkers(functionName))
+	return interpretGoTestResult(ctx, capture, err, false)
 }
 
 func (e *CompiledGoTestExecutor) compile(ctx context.Context, key goTestBuildKey) goTestBuild {
@@ -113,13 +112,13 @@ func (e *CompiledGoTestExecutor) compile(ctx context.Context, key goTestBuildKey
 		args = append(args, "-tags", key.tags)
 	}
 	args = append(args, ".")
-	output, err := e.runner.Run(ctx, key.directory, "go", args...)
+	capture, err := runBounded(ctx, e.runner, key.directory, "go", args, nil)
 	if err == nil {
 		succeeded = true
 		return goTestBuild{binary: binary}
 	}
 
-	failure := interpretGoTestCompileFailure(ctx, output, err)
+	failure := interpretGoTestCompileFailure(ctx, capture.Output, err)
 	return goTestBuild{failure: &failure}
 }
 
@@ -155,8 +154,20 @@ func interpretGoTestCompileFailure(ctx context.Context, output []byte, err error
 	return Execution{Status: ExecutionCannotEvaluate, Reason: "execution_failed", Message: BoundedDiagnostic(text, err.Error())}
 }
 
-func interpretGoTestResult(ctx context.Context, output []byte, err error, functionName string, toolchainCommand bool) Execution {
-	text := string(output)
+// The verdict markers of one selected test, in the order interpretGoTestResult
+// reads them. Each is matched as a plain substring of the output, as before.
+const (
+	markerSkip = iota
+	markerFail
+	markerPass
+)
+
+func goTestMarkers(functionName string) []string {
+	return []string{"--- SKIP: " + functionName, "--- FAIL: " + functionName, "--- PASS: " + functionName}
+}
+
+func interpretGoTestResult(ctx context.Context, capture Capture, err error, toolchainCommand bool) Execution {
+	text := string(capture.Output)
 	if contextErr := ctx.Err(); contextErr != nil {
 		reason := "context_canceled"
 		if errors.Is(contextErr, context.DeadlineExceeded) {
@@ -164,10 +175,10 @@ func interpretGoTestResult(ctx context.Context, output []byte, err error, functi
 		}
 		return Execution{Status: ExecutionCannotEvaluate, Reason: reason, Message: BoundedDiagnostic(text, contextErr.Error())}
 	}
-	if strings.Contains(text, "--- SKIP: "+functionName) {
+	if capture.found(markerSkip) {
 		return Execution{Status: ExecutionCannotEvaluate, Performed: true, Reason: "test_skipped", Message: BoundedDiagnostic(text, "test skipped at runtime")}
 	}
-	if strings.Contains(text, "--- FAIL: "+functionName) {
+	if capture.found(markerFail) {
 		return Execution{Status: ExecutionFail, Performed: true, Reason: "execution_failed", Message: BoundedDiagnostic(text, "bound test failed")}
 	}
 	if err != nil {
@@ -176,7 +187,12 @@ func interpretGoTestResult(ctx context.Context, output []byte, err error, functi
 		}
 		return Execution{Status: ExecutionCannotEvaluate, Reason: "execution_failed", Message: BoundedDiagnostic(text, err.Error())}
 	}
-	if !strings.Contains(text, "--- PASS: "+functionName) {
+	if capture.Incomplete {
+		// The child exited 0 but its output was cut before the end. A skip or a
+		// failure may lie in the unread part, so a pass line proves nothing.
+		return Execution{Status: ExecutionCannotEvaluate, Performed: true, Reason: OutputIncompleteReason, Message: BoundedMessage("output was not read to its end, so a pass cannot be established: a process started by the test still held the output pipe\n" + text)}
+	}
+	if !capture.found(markerPass) {
 		return Execution{Status: ExecutionCannotEvaluate, Performed: true, Reason: "execution_failed", Message: BoundedDiagnostic(text, "go test did not report the selected test as passed")}
 	}
 	return Execution{Status: ExecutionPass, Performed: true, Reason: "rule_passed"}

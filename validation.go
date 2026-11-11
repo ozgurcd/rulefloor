@@ -108,7 +108,7 @@ func dispatchValidate(args []string, stdout io.Writer) error {
 	if err != nil {
 		return writeValidationCommandResult(stdout, invalidValidationResult(request, err.Error()))
 	}
-	allowed := map[string]bool{"--repo": true, "--mode": true, "--profile": true, "--tags": true, "--json": true}
+	allowed := map[string]bool{"--repo": true, "--mode": true, "--profile": true, "--tags": true, "--timeout": true, "--json": true}
 	for name := range flags {
 		if !allowed[name] {
 			return writeValidationCommandResult(stdout, invalidValidationResult(request, fmt.Sprintf("flag %s is not valid for validate", name)))
@@ -121,6 +121,14 @@ func dispatchValidate(args []string, stdout io.Writer) error {
 	request.Mode = ValidationMode(flags["--mode"])
 	request.Profile = flags["--profile"]
 	request.Tags = flags["--tags"]
+	request.Timeout = machine.DefaultTimeout
+	if raw, given := flags["--timeout"]; given {
+		timeout, err := time.ParseDuration(raw)
+		if err != nil || timeout <= 0 {
+			return writeValidationCommandResult(stdout, invalidValidationResult(request, fmt.Sprintf("--timeout %q is not a positive duration such as 90s or 15m", raw)))
+		}
+		request.Timeout = timeout
+	}
 	if len(positionals) == 1 {
 		request.RuleID = positionals[0]
 	} else {

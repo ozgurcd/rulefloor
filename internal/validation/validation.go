@@ -56,12 +56,20 @@ const (
 	RedProofNotApplicable RedProofStatus = "not_applicable"
 )
 
+// DefaultTimeout is the deadline `validate` applies when --timeout is absent.
+// It sits above the ten-minute Go test timeout, so Go's own timeout report
+// arrives first, and leaves five minutes for compiling the test package.
+const DefaultTimeout = 15 * time.Minute
+
 type Request struct {
 	Repository string
 	RuleID     string
 	Mode       Mode
 	Profile    string
 	Tags       string
+	// Timeout bounds the whole validation when positive. Zero adds no
+	// deadline to the caller's context; the command line never sends zero.
+	Timeout time.Duration
 }
 
 type VersionResult struct {
@@ -240,6 +248,11 @@ func (s Service) Validate(ctx context.Context, request Request) Result {
 	if err := validateRequestOptions(request); err != nil {
 		return s.cannotEvaluate(result, "invalid_request", err.Error())
 	}
+	if request.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, request.Timeout)
+		defer cancel()
+	}
 
 	root, err := repository.CanonicalRoot(request.Repository)
 	if err != nil {
@@ -346,6 +359,10 @@ func (s Service) Validate(ctx context.Context, request Request) Result {
 	if result.Evaluation.StructuralReach != nil {
 		reachResult, reachErr := checkengine.EvaluateProtectedReach(ctx, s.reach, root, row)
 		if reachErr != nil {
+			if contextErr := ctx.Err(); contextErr != nil {
+				result.Evaluation.StructuralReach.Status = StatusCannotEvaluate
+				return s.contextResult(result, contextErr)
+			}
 			var evidenceErr *reachevidence.EvidenceError
 			reason := "graph_evidence_unavailable"
 			if errors.As(reachErr, &evidenceErr) {
@@ -396,6 +413,9 @@ func (s Service) Validate(ctx context.Context, request Request) Result {
 }
 
 func validateRequestOptions(request Request) error {
+	if request.Timeout < 0 {
+		return errors.New("timeout must be positive")
+	}
 	if request.Mode == ModeStatic && request.Profile != "" {
 		return errors.New("--profile is not valid in static mode")
 	}

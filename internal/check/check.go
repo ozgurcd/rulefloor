@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/ozgurcd/rulefloor/internal/extract"
@@ -161,7 +162,12 @@ type CommandRunner interface {
 	Run(context.Context, string, string, ...string) ([]byte, error)
 }
 
-type ExecRunner struct{}
+// ExecRunner starts real processes. Go test execution goes through RunBounded;
+// Run is the plain unbounded form kept for the Git calls of diff.
+type ExecRunner struct {
+	// DrainWait overrides OutputDrainWait when positive.
+	DrainWait time.Duration
+}
 
 func (ExecRunner) Run(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
 	command := exec.CommandContext(ctx, name, args...)
@@ -190,8 +196,8 @@ func RunGoTest(ctx context.Context, runner CommandRunner, testFile, functionName
 		args = append(args, "-tags", tags)
 	}
 	args = append(args, ".")
-	output, err := runner.Run(ctx, filepath.Dir(testFile), "go", args...)
-	return interpretGoTestResult(ctx, output, err, functionName, true)
+	capture, err := runBounded(ctx, runner, filepath.Dir(testFile), "go", args, goTestMarkers(functionName))
+	return interpretGoTestResult(ctx, capture, err, true)
 }
 
 func ValidateBuildTags(tags string) error {

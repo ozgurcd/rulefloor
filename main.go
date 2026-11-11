@@ -43,7 +43,7 @@ Usage:
   rulefloor check                             [--repo PATH] [--report pw.json] [--all "repo1,repo2"]
                                               [--run-profile NAME [--tags T]] [--only ID] [--timings]
                                               [--light] [--max-load N] [--load-wait D] [--load-poll D] [--jobs N]
-  rulefloor validate ID --repo PATH --mode static|execute [--profile NAME] [--tags T] --json
+  rulefloor validate ID --repo PATH --mode static|execute [--profile NAME] [--tags T] [--timeout D] --json
   rulefloor capabilities [--json]
   rulefloor ops-emit --baseline PATH --original-id ID --source-id ID --review-id ID --authority ID [--repo PATH]
   rulefloor ops-validate|ops-apply|ops-overlay --operations PATH --original-id ID --source-id ID --review-id ID --authority ID [--repo PATH]
@@ -171,11 +171,14 @@ Sentence, binding, proof, covered-symbol, and test-fingerprint changes are
 classified separately. A difference exits 1; unavailable or invalid Git
 evidence exits 2. This detects recorded text changes, not whether prose is true.
 `,
-	"validate": `Usage: rulefloor validate ID --repo PATH --mode static|execute [--profile NAME] [--tags T] --json
+	"validate": `Usage: rulefloor validate ID --repo PATH --mode static|execute [--profile NAME] [--tags T] [--timeout D] --json
 
 Validate one selected binding as a strict rulefloor.validation.v1 document.
 Static mode never executes and rejects --profile/--tags. Execute mode performs
 static validation first, never downgrades, and supports validated Go build tags.
+--timeout D (default 15m) bounds the whole validation; D must be a positive
+duration. On expiry the test's process group is killed and the result is
+cannot_evaluate with reason deadline_exceeded.
 `,
 }
 
@@ -230,6 +233,7 @@ var flagTakesValue = map[string]bool{
 	"--light":       false,
 	"--max-load":    true,
 	"--load-wait":   true,
+	"--timeout":     true,
 	"--load-poll":   true,
 	"--jobs":        true,
 }

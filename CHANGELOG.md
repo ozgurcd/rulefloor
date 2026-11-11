@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `validate --timeout DURATION` bounds the whole validation. The default is
+  `15m`. Zero, a negative value, or an unparsable value is `invalid_request`.
+  On expiry the result is `cannot_evaluate` with reason `deadline_exceeded`.
+- `rulefloor.capabilities.v1` reports the execution bounds in
+  `execution_semantics`: `capture_limit_bytes`, `process_group_stop`,
+  `validate_timeout_flag` and `validate_timeout_default_seconds`.
+- Reason `output_incomplete` (`cannot_evaluate`) in `rulefloor.validation.v1`:
+  the test process exited 0 but a process it started still held the output
+  pipe, so the output was not read to its end.
+
+### Changed
+
+- Go test execution in `check`, `validate` and `prove --run` keeps at most
+  65,536 bytes of one child's output. The pass, fail and skip lines are found
+  by scanning the whole stream, so the verdict does not depend on dropped
+  bytes and a cut stream never yields a pass.
+- On Linux and macOS each executed child leads its own process group. The
+  whole group is killed on deadline, cancel, SIGINT and SIGTERM. Rulefloor
+  waits at most five seconds for the end of output after the child exits, so a
+  surviving descendant cannot hang it.
+
+### Compatibility
+
+- The new capability fields and the new reason are additive inside the v1
+  schemas. A consumer that meets an unknown reason must act on `outcome`.
+- A caller that kills Rulefloor's own process group with SIGKILL no longer
+  reaches the test processes, which now run in a separate group. Send SIGTERM
+  first: Rulefloor then kills the child group before it ends.
+
 ## [0.9.2] - 2026-11-04
 
 ### Added

@@ -4,6 +4,7 @@ package capabilities
 
 import (
 	"slices"
+	"time"
 
 	checkengine "github.com/ozgurcd/rulefloor/internal/check"
 	"github.com/ozgurcd/rulefloor/internal/extract"
@@ -39,6 +40,15 @@ type ExecutionSemantics struct {
 	ExecuteFallsBackToStatic bool   `json:"execute_falls_back_to_static"`
 	PolicyPersisted          bool   `json:"policy_persisted"`
 	LegacyProfileCompatible  bool   `json:"legacy_profile_compatible"`
+	// CaptureLimitBytes is the most output kept from one executed child.
+	CaptureLimitBytes int `json:"capture_limit_bytes"`
+	// ProcessGroupStop reports that an executed child's whole process group
+	// is killed on cancel, deadline, SIGINT and SIGTERM.
+	ProcessGroupStop bool `json:"process_group_stop"`
+	// ValidateTimeoutFlag names the validate deadline flag, and
+	// ValidateTimeoutDefaultSeconds is the deadline used without it.
+	ValidateTimeoutFlag           string `json:"validate_timeout_flag"`
+	ValidateTimeoutDefaultSeconds int    `json:"validate_timeout_default_seconds"`
 }
 
 type StructuralReach struct {
@@ -90,6 +100,11 @@ func New(rulefloorVersion string, commands []string) Result {
 			ExecuteFallsBackToStatic: false,
 			PolicyPersisted:          true,
 			LegacyProfileCompatible:  true,
+
+			CaptureLimitBytes:             checkengine.CaptureLimitBytes,
+			ProcessGroupStop:              checkengine.ProcessGroupStop,
+			ValidateTimeoutFlag:           "--timeout",
+			ValidateTimeoutDefaultSeconds: int(machine.DefaultTimeout / time.Second),
 		},
 		StructuralReach: StructuralReach{
 			Provider: "gograph", TestKinds: []string{string(extract.KindGoTest)},

@@ -368,7 +368,7 @@ Every command takes `--repo PATH` (default `.`).
 | `covers [--json]` | Read every rule ID and its optional covered-symbol set. JSON is a deterministic `rulefloor.covers.v1` document. |
 | `check [--report pw.json] [--all "repo1,repo2"] [--timings] [--light] [--max-load N] [--load-wait D] [--load-poll D] [--jobs N]` | Verify the complete repository gate (below). `--timings` appends bounded human performance diagnostics. `--light` skips executing bound tests (routine use, not a gate); `--max-load`/`--jobs` protect a busy host. |
 | `check --only ID [--timings]` | Fast human feedback for one armed binding. This intentionally omits other rows, global ratchet evaluation, and orphan scanning, so it never replaces full `check`. A matching `--run-profile` executes a non-unit Go row. |
-| `validate ID --mode static\|execute --json` | Validate exactly one rule and emit `rulefloor.validation.v1` JSON. Optional execute-only `--profile NAME` selects the declared profile; optional `--tags TAGS` supplies validated Go build tags. |
+| `validate ID --mode static\|execute --json` | Validate exactly one rule and emit `rulefloor.validation.v1` JSON. Optional execute-only `--profile NAME` selects the declared profile; optional `--tags TAGS` supplies validated Go build tags. Optional `--timeout D` (default `15m`) bounds the whole validation. |
 | `capabilities [--json]` | Describe features compiled into this binary without reading a repository or ledger. |
 | `version --json` | Emit `rulefloor.version.v1` JSON using the same release-stamped version as human output. |
 | `ops-emit --baseline PATH --original-id ID --source-id ID --review-id ID --authority ID` | Emit retained immutable floor operations from a baseline ledger and the current tool-written ledger. |
@@ -677,7 +677,22 @@ The v1 object contains `schema_version`, `rulefloor_version`,
 `machine_interfaces`, per-kind `test_kinds` entries with
 `static_validation`/`execution` booleans, `validation_modes`, `proof_kinds`,
 `ledger_features`, `commands`, structured `execution_semantics`, and
-`structural_reach`. The latter describes compiled support and does not inspect
+`structural_reach`. `execution_semantics` also states the execution bounds, so
+a caller can test for them before it relies on them:
+
+```json
+"execution_semantics":{"support_depends_on":"test_kind","static_validation_executes":false,"execute_falls_back_to_static":false,"policy_persisted":true,"legacy_profile_compatible":true,"capture_limit_bytes":65536,"process_group_stop":true,"validate_timeout_flag":"--timeout","validate_timeout_default_seconds":900}
+```
+
+- `capture_limit_bytes`: the most output kept from one executed child process.
+- `process_group_stop`: an executed child's whole process group is killed on
+  cancel, deadline, SIGINT and SIGTERM.
+- `validate_timeout_flag` and `validate_timeout_default_seconds`: `validate`
+  accepts this deadline flag, and uses this default without it.
+
+A binary older than these fields omits them; treat an absent field as "not
+supported". See [Execution bounds](#execution-bounds) for what they guarantee.
+`structural_reach` describes compiled support and does not inspect
 whether Gograph or a graph is available in the current environment. Arrays use
 the deterministic order shown by the exact conformance fixture in
 [`testdata/machine`](testdata/machine).
@@ -703,7 +718,11 @@ Repository status remains the responsibility of `check` and `validate`.
 `rulefloor.ledger-diff.v1` are stable v1 contracts.
 Within v1, required fields, field meanings, outcome/reason meanings, and exit
 mapping will not be removed or renamed. Compatible releases may add optional
-fields. Consumers must reject an unknown `schema_version` rather than guessing.
+fields. They may also add a reason code, as v0.7.0 did for the graph-evidence
+reasons: a new reason always carries one of the three existing outcomes, so a
+consumer that meets an unknown reason must act on `outcome`, which keeps its
+meaning and exit code. Consumers must reject an unknown `schema_version` rather
+than guessing.
 The existing `version` value remains the release-time `main.version` stamp for
 compatibility. `toolchain_version` is the main-module version embedded by the
 Go toolchain and read with `debug.ReadBuildInfo()`. An unversioned source or
@@ -724,7 +743,7 @@ also cannot turn a source-archive build into a tagged module build: `(devel)` is
 reported rather than guessed away.
 Exact v1 conformance documents are kept in [`testdata/machine`](testdata/machine).
 
-`rulefloor validate RULE-ID --repo PATH --mode static|execute [--profile NAME] [--tags TAGS] --json`
+`rulefloor validate RULE-ID --repo PATH --mode static|execute [--profile NAME] [--tags TAGS] [--timeout DURATION] --json`
 evaluates exactly one ledger row and writes one `rulefloor.validation.v1`
 document to stdout. It does not fail because another well-formed row has a
 hash, skip, execution, or proof problem. A malformed ledger remains
@@ -758,6 +777,12 @@ into JSON stdout.
 - Playwright and Vitest rows can pass `static`; direct `execute` is
   `cannot_evaluate` because Rulefloor has no native runner for them. There is no
   silent execute-to-static downgrade.
+- `--timeout DURATION` bounds the whole validation, in either mode. The value
+  is a Go duration such as `90s` or `15m`; the default is `15m`, which sits
+  above the ten-minute Go test timeout and leaves five minutes for compiling.
+  Zero, a negative value, or an unparsable value is `invalid_request`: there is
+  no "no limit" form. On expiry the test's process group is killed and the
+  result is `cannot_evaluate` with reason `deadline_exceeded`.
 
 Machine outcomes and process exits are exact: `pass` → 0, evaluated `fail` → 1,
 and `cannot_evaluate` → 2.
@@ -775,6 +800,7 @@ Stable `evaluation.reason` codes are:
 | `check_file_missing`, `tag_missing`, `tag_ambiguous`, `cannot_parse_test` | `cannot_evaluate` | Source discovery or extraction could not produce one trustworthy binding. |
 | `graph_evidence_unavailable`, `graph_evidence_insufficient`, `symbol_identity_ambiguous` | `cannot_evaluate` | Required Gograph evidence or stable identity cannot be trusted enough to evaluate exact reach. |
 | `execution_unsupported`, `toolchain_unavailable`, `execution_failed`, `context_canceled`, `deadline_exceeded` | `cannot_evaluate` | Requested execution could not be completed reliably. |
+| `output_incomplete` | `cannot_evaluate` | The test process exited 0, but its output was not read to its end because a process it started still held the output pipe. A pass cannot be established from a cut stream. |
 
 Diagnostics use the same reason when applicable; `ledger_unavailable` is the
 specific diagnostic code for an unavailable ledger while the result reason is
@@ -871,6 +897,48 @@ Load is read from `/proc/loadavg` or `sysctl -n vm.loadavg`; if it cannot be
 read while a guard is set, the check stops rather than passing unguarded.
 Invalid values exit 2. `--max-load` applies to `check` only, not `validate`
 or `prove --run`.
+
+### Execution bounds
+
+Every Go test process that `check`, `validate` and `prove --run` start (the
+`go test` command, the package compile, and each compiled test binary) runs
+under the same three bounds.
+
+**Bounded capture.** Rulefloor keeps at most 65,536 bytes of one child's
+combined output: the start of the stream. It reads the rest only to scan it,
+so a child that keeps printing never blocks on a full pipe and never grows
+Rulefloor's memory. The verdict does not depend on the dropped bytes: the
+`--- PASS:`, `--- FAIL:` and `--- SKIP:` lines of the selected test are found
+by scanning the whole stream as it is read, including a line split across two
+reads. A failure line past the limit is still a failure. A pass needs the
+stream read to its end, exit status 0, and the pass line. Output is handled as
+bytes; only the 4,096-byte diagnostic becomes text.
+
+**Process-group stop.** On Linux and macOS the child leads its own process
+group. When the deadline passes, the context is cancelled, or Rulefloor
+receives SIGINT or SIGTERM, Rulefloor kills the whole group with SIGKILL, so
+the test binary and the processes it started end with `go`. After a SIGINT or
+SIGTERM Rulefloor then ends by that same signal. Once the child has exited,
+Rulefloor waits at most five seconds for the end of its output. A process that
+outlives the child and still holds the pipe ends that wait; the result is then
+`cannot_evaluate` with reason `output_incomplete`, never a pass.
+
+**Deadline.** `validate` applies `--timeout` (default `15m`). `check` and
+`prove --run` add no deadline of their own; the ten-minute Go test timeout
+still applies to them.
+
+What these bounds do not cover:
+
+- SIGKILL to Rulefloor cannot be handled. The child group is separate from
+  Rulefloor's own group, so a caller that kills only Rulefloor's group with
+  SIGKILL leaves the child group running. Send SIGTERM first, or kill the
+  child group as well.
+- A descendant that moves itself to another process group or session is not
+  killed. It cannot hang Rulefloor, because the wait for output is bounded.
+- A background process that survives a passing test and does not hold the
+  output pipe is left running, as before.
+- The Git calls of `diff` and `ledger-diff` and the Gograph calls are separate
+  runners and are not changed by these bounds.
 
 ## Wiring into your entrypoints
 

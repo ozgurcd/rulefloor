@@ -50,5 +50,11 @@ func cmdCapabilities(jsonOutput bool, stdout io.Writer) error {
 	fmt.Fprintf(stdout, "structural reach: %s exact stable IDs for %s (possible is insufficient)\n", result.StructuralReach.Provider, strings.Join(result.StructuralReach.TestKinds, ", "))
 	fmt.Fprintf(stdout, "commands: %s\n", strings.Join(result.Commands, ", "))
 	fmt.Fprintln(stdout, "execution: persisted policy; legacy profiles compatible; static never executes; execute never falls back to static")
+	semantics := result.ExecutionSemantics
+	groupStop := "direct child only is stopped"
+	if semantics.ProcessGroupStop {
+		groupStop = "process group stopped on cancel, deadline, SIGINT and SIGTERM"
+	}
+	fmt.Fprintf(stdout, "execution bounds: %d captured bytes per child; %s; validate %s default %ds\n", semantics.CaptureLimitBytes, groupStop, semantics.ValidateTimeoutFlag, semantics.ValidateTimeoutDefaultSeconds)
 	return nil
 }

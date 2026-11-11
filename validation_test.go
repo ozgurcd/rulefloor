@@ -318,6 +318,11 @@ func TestValidateInvalidRequestsAreJSONOnly(t *testing.T) {
 		{"validate", "JSON-VALIDATE-1", "--mode", "unknown", "--json"},
 		{"validate", "JSON-VALIDATE-1", "--mode", "static", "--profile", "unit", "--json"},
 		{"validate", "JSON-VALIDATE-1", "--bogus", "--json"},
+		{"validate", "JSON-VALIDATE-1", "--mode", "execute", "--timeout", "0", "--json"},
+		{"validate", "JSON-VALIDATE-1", "--mode", "execute", "--timeout", "-5s", "--json"},
+		{"validate", "JSON-VALIDATE-1", "--mode", "execute", "--timeout", "soon", "--json"},
+		{"validate", "JSON-VALIDATE-1", "--mode", "execute", "--timeout=", "--json"},
+		{"validate", "JSON-VALIDATE-1", "--mode", "static", "--timeout", "0s", "--json"},
 	}
 	for _, args := range tests {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
@@ -370,6 +375,39 @@ func TestValidationServiceOperationalFailures(t *testing.T) {
 	result = service.Validate(deadline, ValidationRequest{Repository: repo, RuleID: "JSON-VALIDATE-1", Mode: ValidationModeExecute})
 	if result.Evaluation.Reason != "deadline_exceeded" {
 		t.Fatalf("deadline result = %+v", result)
+	}
+}
+
+// blockingValidationRunner stands in for a test that never ends: it returns
+// only when the validation deadline cancels its context.
+type blockingValidationRunner struct{}
+
+func (blockingValidationRunner) Run(ctx context.Context, _ string, _ string, _ ...string) ([]byte, error) {
+	<-ctx.Done()
+	return []byte("--- PASS: TestValidatedRule (0.00s)\n"), ctx.Err()
+}
+
+func TestValidateTimeoutExpiryIsDeadlineExceeded(t *testing.T) {
+	repo := newValidationGoRepo(t, "unit")
+	service := validationService{version: "v0.test", now: time.Now, runner: blockingValidationRunner{}}
+	result := service.Validate(context.Background(), ValidationRequest{Repository: repo, RuleID: "JSON-VALIDATE-1", Mode: ValidationModeExecute, Timeout: 20 * time.Millisecond})
+	if result.Evaluation.Outcome != ValidationCannotEvaluate || result.Evaluation.Reason != "deadline_exceeded" || result.Evaluation.Execution.Status != ValidationStatusCannotEvaluate {
+		t.Fatalf("expired timeout result = %+v", result)
+	}
+	result = service.Validate(context.Background(), ValidationRequest{Repository: repo, RuleID: "JSON-VALIDATE-1", Mode: ValidationModeExecute, Timeout: -time.Second})
+	if result.Evaluation.Reason != "invalid_request" {
+		t.Fatalf("negative timeout result = %+v", result)
+	}
+}
+
+func TestValidateTimeoutFlagIsAcceptedAndOtherCommandsRefuseIt(t *testing.T) {
+	repo := newValidationGoRepo(t, "unit")
+	code, result, _, stderr := runValidationCommand(t, "validate", "JSON-VALIDATE-1", "--repo", repo, "--mode", "static", "--timeout", "2m", "--json")
+	if code != 0 || stderr != "" || result.Evaluation.Reason != "rule_passed" {
+		t.Fatalf("validate --timeout 2m: code=%d stderr=%q result=%+v", code, stderr, result)
+	}
+	if code, _, _ := runSeparate("check", "--repo", repo, "--timeout", "2m"); code != 2 {
+		t.Fatalf("check --timeout: code=%d, want 2", code)
 	}
 }
 

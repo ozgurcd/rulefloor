@@ -24,6 +24,7 @@ ledger features: FLOOR, RED-PROOFS, six-column-ledger, proof-v1, covers-v1, bind
 structural reach: gograph exact stable IDs for go-test (possible is insufficient)
 commands: amend, arm, capabilities, check, covers, declare, diff, help, init, ledger-diff, list, ops-apply, ops-emit, ops-overlay, ops-validate, prove, redproofs, rehash, repair-fixture-row, show, unarmed, unproved, validate, version
 execution: persisted policy; legacy profiles compatible; static never executes; execute never falls back to static
+execution bounds: 65536 captured bytes per child; process group stopped on cancel, deadline, SIGINT and SIGTERM; validate --timeout default 900s
 `
 	if stdout != expected {
 		t.Fatalf("human capabilities changed\nactual:\n%s\nexpected:\n%s", stdout, expected)
