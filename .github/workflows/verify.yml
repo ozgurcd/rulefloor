@@ -1,7 +1,10 @@
 name: verify
 
 on:
+  # Release commits are pushed straight to main, so the push run is their
+  # only CI; other branches are verified by their pull request run.
   push:
+    branches: [main]
   pull_request:
 
 permissions:
@@ -15,7 +18,5 @@ jobs:
       - uses: ozgurcd/lictor/.github/actions/go-toolchain@d35a8ad07dc59bd76153f0ed7d3b1ade22c6cf04 # v0.4.6-6-gd35a8ad (untagged action snapshot)
       - name: Install vulnerability checker
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
-      - name: Confirm Go baseline
-        run: go version
       - name: Run complete verification gate
         run: make verify
